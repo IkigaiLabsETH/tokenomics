@@ -1,0 +1,14 @@
+{
+  "name": "ikigai",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "contracts"
+  ],
+  "scripts": {
+    "frontend:dev": "yarn workspace frontend dev",
+    "frontend:build": "yarn workspace frontend build",
+    "contracts:compile": "yarn workspace contracts compile",
+    "contracts:test": "yarn workspace contracts test"
+  }
+} 
