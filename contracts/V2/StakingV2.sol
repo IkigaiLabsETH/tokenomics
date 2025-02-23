@@ -13,6 +13,14 @@ contract StakingV2 is ReentrancyGuard, AccessControl {
         uint256 rewardMultiplier;
     }
 
+    struct StakingTier {
+        uint256 minStake;
+        uint256 discount;
+        uint256 minLockDuration;
+        uint256 maxLockDuration;
+        uint256 baseReward;
+    }
+
     IERC20 public immutable ikigaiToken;
     
     // Lowered staking tiers
@@ -30,6 +38,25 @@ contract StakingV2 is ReentrancyGuard, AccessControl {
     event Staked(address indexed user, uint256 amount, uint256 lockPeriod);
     event Unstaked(address indexed user, uint256 amount);
     event RewardsClaimed(address indexed user, uint256 amount);
+
+    // Add flexible lock periods
+    StakingTier[] public stakingTiers = [
+        StakingTier({
+            minStake: 100 ether,     // 100 IKIGAI
+            discount: 100,           // 1%
+            minLockDuration: 1 days,
+            maxLockDuration: 7 days,
+            baseReward: 100          // 1% base reward
+        }),
+        StakingTier({
+            minStake: 1000 ether,    // 1,000 IKIGAI
+            discount: 500,           // 5%
+            minLockDuration: 3 days,
+            maxLockDuration: 14 days,
+            baseReward: 200          // 2% base reward
+        }),
+        // ... more tiers ...
+    ];
 
     constructor(address _ikigaiToken) {
         ikigaiToken = IERC20(_ikigaiToken);
@@ -82,6 +109,30 @@ contract StakingV2 is ReentrancyGuard, AccessControl {
         uint256 lockMultiplier = (lockPeriod * 5) / (7 days); // +5% per week
         
         return baseMultiplier + lockMultiplier;
+    }
+
+    // Add daily rewards
+    function calculateDailyReward(
+        uint256 amount,
+        uint256 lockDuration
+    ) public view returns (uint256) {
+        uint256 baseReward = 0;
+        uint256 durationBonus = 0;
+
+        // Find applicable tier
+        for (uint256 i = stakingTiers.length; i > 0; i--) {
+            if (amount >= stakingTiers[i-1].minStake) {
+                baseReward = stakingTiers[i-1].baseReward;
+                break;
+            }
+        }
+
+        // Calculate duration bonus (linear scaling)
+        if (lockDuration >= 1 days) {
+            durationBonus = (lockDuration * 100) / (30 days); // Up to 100 basis points for 30 days
+        }
+
+        return (amount * (baseReward + durationBonus)) / 10000 / 365;
     }
 
     // Additional functions would go here...
