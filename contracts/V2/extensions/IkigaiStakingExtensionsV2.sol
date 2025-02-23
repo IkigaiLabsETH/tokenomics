@@ -6,85 +6,86 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../interfaces/IIkigaiVaultV2.sol";
-import "../interfaces/IIkigaiRewardsExtensionsV2.sol";
+import "../interfaces/IIkigaiRewardsV2.sol";
 
 contract IkigaiStakingExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant STAKING_MANAGER = keccak256("STAKING_MANAGER");
     bytes32 public constant REWARDS_ROLE = keccak256("REWARDS_ROLE");
 
     struct StakingPool {
-        uint256 totalStaked;       // Total tokens staked
-        uint256 rewardRate;        // Rewards per second
-        uint256 lockDuration;      // Lock duration
-        uint256 lastUpdateTime;    // Last update time
-        bool isActive;             // Pool active status
+        address stakingToken;     // Token to stake
+        uint256 totalStaked;      // Total staked amount
+        uint256 rewardRate;       // Rewards per second
+        uint256 lastUpdateTime;   // Last update time
+        bool isActive;            // Pool status
     }
 
     struct UserStake {
-        uint256 amount;            // Staked amount
-        uint256 lockEndTime;       // Lock end time
-        uint256 rewards;           // Pending rewards
-        uint256 multiplier;        // Reward multiplier
-        bool isLocked;             // Lock status
+        uint256 amount;           // Staked amount
+        uint256 rewards;          // Pending rewards
+        uint256 lastClaim;        // Last claim time
+        uint256 lockEnd;          // Lock end time
+        bool isLocked;            // Lock status
     }
 
-    struct PoolStats {
-        uint256 totalUsers;        // Total users
-        uint256 totalRewards;      // Total rewards distributed
-        uint256 avgStakeTime;      // Average stake duration
-        uint256 apy;               // Current APY
-        uint256 lastUpdate;        // Last update time
+    struct PoolConfig {
+        uint256 minStake;         // Minimum stake
+        uint256 maxStake;         // Maximum stake
+        uint256 lockPeriod;       // Lock duration
+        uint256 earlyWithdrawFee; // Early withdrawal fee
+        bool requiresLock;        // Lock requirement
     }
 
     // State variables
     IIkigaiVaultV2 public vault;
-    IIkigaiRewardsExtensionsV2 public rewards;
-    IERC20 public stakingToken;
+    IIkigaiRewardsV2 public rewards;
     
     mapping(bytes32 => StakingPool) public stakingPools;
     mapping(bytes32 => mapping(address => UserStake)) public userStakes;
-    mapping(bytes32 => PoolStats) public poolStats;
-    mapping(address => bool) public whitelistedStakers;
+    mapping(bytes32 => PoolConfig) public poolConfigs;
+    mapping(address => bool) public supportedTokens;
     
-    uint256 public constant BASIS_POINTS = 10000;
-    uint256 public constant MIN_STAKE = 100;
-    uint256 public constant MAX_MULTIPLIER = 300; // 3x
+    uint256 public constant REWARD_PRECISION = 1e18;
+    uint256 public constant MAX_LOCK_PERIOD = 365 days;
+    uint256 public constant MAX_EARLY_FEE = 1000; // 10%
     
     // Events
-    event PoolCreated(bytes32 indexed poolId, uint256 rewardRate);
+    event PoolCreated(bytes32 indexed poolId, address stakingToken);
     event Staked(bytes32 indexed poolId, address indexed user, uint256 amount);
     event Unstaked(bytes32 indexed poolId, address indexed user, uint256 amount);
     event RewardsClaimed(bytes32 indexed poolId, address indexed user, uint256 amount);
 
     constructor(
         address _vault,
-        address _rewards,
-        address _stakingToken
+        address _rewards
     ) {
         vault = IIkigaiVaultV2(_vault);
-        rewards = IIkigaiRewardsExtensionsV2(_rewards);
-        stakingToken = IERC20(_stakingToken);
+        rewards = IIkigaiRewardsV2(_rewards);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     // Pool management
     function createPool(
         bytes32 poolId,
-        uint256 rewardRate,
-        uint256 lockDuration
+        address stakingToken,
+        PoolConfig calldata config
     ) external onlyRole(STAKING_MANAGER) {
         require(!stakingPools[poolId].isActive, "Pool exists");
-        require(rewardRate > 0, "Invalid rate");
+        require(supportedTokens[stakingToken], "Token not supported");
+        require(config.lockPeriod <= MAX_LOCK_PERIOD, "Lock too long");
+        require(config.earlyWithdrawFee <= MAX_EARLY_FEE, "Fee too high");
         
         stakingPools[poolId] = StakingPool({
+            stakingToken: stakingToken,
             totalStaked: 0,
-            rewardRate: rewardRate,
-            lockDuration: lockDuration,
+            rewardRate: 0,
             lastUpdateTime: block.timestamp,
             isActive: true
         });
         
-        emit PoolCreated(poolId, rewardRate);
+        poolConfigs[poolId] = config;
+        
+        emit PoolCreated(poolId, stakingToken);
     }
 
     // Staking operations
@@ -92,100 +93,107 @@ contract IkigaiStakingExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         bytes32 poolId,
         uint256 amount
     ) external nonReentrant whenNotPaused {
-        require(amount >= MIN_STAKE, "Amount too low");
-        require(whitelistedStakers[msg.sender], "Not whitelisted");
-        
         StakingPool storage pool = stakingPools[poolId];
-        UserStake storage userStake = userStakes[poolId][msg.sender];
-        
         require(pool.isActive, "Pool not active");
         
+        PoolConfig storage config = poolConfigs[poolId];
+        require(amount >= config.minStake, "Below min stake");
+        
+        UserStake storage userStake = userStakes[poolId][msg.sender];
+        require(
+            userStake.amount + amount <= config.maxStake,
+            "Exceeds max stake"
+        );
+        
+        // Update rewards
+        _updateRewards(poolId, msg.sender);
+        
         // Transfer tokens
-        stakingToken.transferFrom(msg.sender, address(this), amount);
+        IERC20(pool.stakingToken).transferFrom(msg.sender, address(this), amount);
         
-        // Update user stake
-        if (userStake.amount > 0) {
-            _harvestRewards(poolId, msg.sender);
-        }
-        
+        // Update stake
         userStake.amount += amount;
-        userStake.lockEndTime = block.timestamp + pool.lockDuration;
-        userStake.isLocked = true;
-        
-        // Update pool
         pool.totalStaked += amount;
-        pool.lastUpdateTime = block.timestamp;
         
-        // Update stats
-        _updatePoolStats(poolId);
+        if (config.requiresLock) {
+            userStake.lockEnd = block.timestamp + config.lockPeriod;
+            userStake.isLocked = true;
+        }
         
         emit Staked(poolId, msg.sender, amount);
     }
 
-    // Reward management
+    // Unstaking
+    function unstake(
+        bytes32 poolId,
+        uint256 amount
+    ) external nonReentrant {
+        UserStake storage userStake = userStakes[poolId][msg.sender];
+        require(userStake.amount >= amount, "Insufficient stake");
+        
+        StakingPool storage pool = stakingPools[poolId];
+        PoolConfig storage config = poolConfigs[poolId];
+        
+        // Check lock
+        if (userStake.isLocked) {
+            require(block.timestamp >= userStake.lockEnd, "Still locked");
+        }
+        
+        // Update rewards
+        _updateRewards(poolId, msg.sender);
+        
+        // Calculate fee
+        uint256 fee = 0;
+        if (block.timestamp < userStake.lockEnd) {
+            fee = (amount * config.earlyWithdrawFee) / 10000;
+        }
+        
+        // Transfer tokens
+        IERC20(pool.stakingToken).transfer(msg.sender, amount - fee);
+        
+        // Update stake
+        userStake.amount -= amount;
+        pool.totalStaked -= amount;
+        
+        if (userStake.amount == 0) {
+            userStake.isLocked = false;
+        }
+        
+        emit Unstaked(poolId, msg.sender, amount);
+    }
+
+    // Rewards claiming
     function claimRewards(
         bytes32 poolId
     ) external nonReentrant {
         UserStake storage userStake = userStakes[poolId][msg.sender];
-        require(userStake.amount > 0, "No stake");
+        require(userStake.rewards > 0, "No rewards");
         
-        uint256 rewards = _calculateRewards(poolId, msg.sender);
-        require(rewards > 0, "No rewards");
-        
-        // Reset rewards
+        uint256 rewards = userStake.rewards;
         userStake.rewards = 0;
+        userStake.lastClaim = block.timestamp;
         
         // Transfer rewards
-        stakingToken.transfer(msg.sender, rewards);
+        rewards.transfer(msg.sender, rewards);
         
         emit RewardsClaimed(poolId, msg.sender, rewards);
     }
 
     // Internal functions
-    function _harvestRewards(
+    function _updateRewards(
         bytes32 poolId,
         address user
     ) internal {
-        uint256 rewards = _calculateRewards(poolId, user);
-        if (rewards > 0) {
-            userStakes[poolId][user].rewards += rewards;
-        }
-    }
-
-    function _calculateRewards(
-        bytes32 poolId,
-        address user
-    ) internal view returns (uint256) {
         StakingPool storage pool = stakingPools[poolId];
         UserStake storage userStake = userStakes[poolId][user];
         
         uint256 timeElapsed = block.timestamp - pool.lastUpdateTime;
-        uint256 rewardPerToken = pool.rewardRate * timeElapsed;
+        if (timeElapsed > 0 && pool.totalStaked > 0) {
+            uint256 rewardPerToken = (timeElapsed * pool.rewardRate * REWARD_PRECISION) / pool.totalStaked;
+            userStake.rewards += (userStake.amount * rewardPerToken) / REWARD_PRECISION;
+        }
         
-        return (userStake.amount * rewardPerToken * userStake.multiplier) / BASIS_POINTS;
-    }
-
-    function _updatePoolStats(bytes32 poolId) internal {
-        PoolStats storage stats = poolStats[poolId];
-        StakingPool storage pool = stakingPools[poolId];
-        
-        stats.totalUsers = _countStakers(poolId);
-        stats.apy = _calculateAPY(poolId);
-        stats.lastUpdate = block.timestamp;
-    }
-
-    function _countStakers(
-        bytes32 poolId
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
-    }
-
-    function _calculateAPY(
-        bytes32 poolId
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
+        pool.lastUpdateTime = block.timestamp;
     }
 
     // View functions
@@ -202,15 +210,15 @@ contract IkigaiStakingExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         return userStakes[poolId][user];
     }
 
-    function getPoolStats(
+    function getPoolConfig(
         bytes32 poolId
-    ) external view returns (PoolStats memory) {
-        return poolStats[poolId];
+    ) external view returns (PoolConfig memory) {
+        return poolConfigs[poolId];
     }
 
-    function isWhitelisted(
-        address staker
+    function isTokenSupported(
+        address token
     ) external view returns (bool) {
-        return whitelistedStakers[staker];
+        return supportedTokens[token];
     }
 } 

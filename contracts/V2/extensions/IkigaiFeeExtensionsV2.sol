@@ -10,222 +10,203 @@ import "../interfaces/IIkigaiTreasuryV2.sol";
 
 contract IkigaiFeeExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant FEE_MANAGER = keccak256("FEE_MANAGER");
-    bytes32 public constant COLLECTOR_ROLE = keccak256("COLLECTOR_ROLE");
+    bytes32 public constant DISTRIBUTOR_ROLE = keccak256("DISTRIBUTOR_ROLE");
 
     struct FeeConfig {
-        uint256 tradingFee;        // Trading fee (basis points)
-        uint256 stakingFee;        // Staking fee (basis points)
-        uint256 withdrawalFee;     // Withdrawal fee (basis points)
-        uint256 performanceFee;    // Performance fee (basis points)
-        bool dynamicFees;          // Whether fees are dynamic
+        uint256 tradingFee;      // Trading fee (basis points)
+        uint256 protocolFee;     // Protocol fee (basis points)
+        uint256 stakingFee;      // Staking reward fee (basis points)
+        uint256 treasuryFee;     // Treasury fee (basis points)
+        bool isActive;           // Fee config status
     }
 
     struct FeeDistribution {
-        uint256 treasuryShare;     // Treasury allocation (basis points)
-        uint256 stakingShare;      // Staking rewards allocation
-        uint256 buybackShare;      // Token buyback allocation
-        uint256 burnShare;         // Token burn allocation
-        uint256 referralShare;     // Referral rewards allocation
+        uint256 protocolShare;   // Protocol share percentage
+        uint256 stakingShare;    // Staking share percentage
+        uint256 treasuryShare;   // Treasury share percentage
+        uint256 burnShare;       // Burn share percentage
+        bool isActive;           // Distribution status
     }
 
-    struct FeeCollection {
-        uint256 tradingFees;       // Collected trading fees
-        uint256 stakingFees;       // Collected staking fees
-        uint256 withdrawalFees;    // Collected withdrawal fees
-        uint256 performanceFees;   // Collected performance fees
-        uint256 lastDistribution;  // Last distribution timestamp
+    struct FeeStats {
+        uint256 totalCollected;  // Total fees collected
+        uint256 totalDistributed; // Total fees distributed
+        uint256 lastDistribution; // Last distribution time
+        uint256 periodRevenue;   // Current period revenue
+        uint256 periodStart;     // Current period start
     }
 
     // State variables
-    IERC20 public immutable ikigaiToken;
     IIkigaiVaultV2 public vault;
     IIkigaiTreasuryV2 public treasury;
+    IERC20 public feeToken;
     
-    mapping(address => FeeConfig) public feeConfigs;
-    mapping(address => FeeDistribution) public feeDistributions;
-    mapping(address => FeeCollection) public feeCollections;
+    mapping(bytes32 => FeeConfig) public feeConfigs;
+    mapping(bytes32 => FeeDistribution) public distributions;
+    mapping(address => FeeStats) public feeStats;
     mapping(address => bool) public feeExempt;
     
-    uint256 public constant BASIS_POINTS = 10000;
     uint256 public constant MAX_FEE = 1000; // 10%
-    uint256 public constant DISTRIBUTION_INTERVAL = 1 days;
+    uint256 public constant DISTRIBUTION_PERIOD = 1 days;
+    uint256 public constant MIN_DISTRIBUTION = 100e18;
     
     // Events
-    event FeeConfigUpdated(address indexed token, string feeType);
+    event FeeConfigUpdated(bytes32 indexed configId);
     event FeesCollected(address indexed token, uint256 amount);
-    event FeesDistributed(address indexed token, uint256 amount);
+    event FeesDistributed(bytes32 indexed configId, uint256 amount);
     event FeeExemptionUpdated(address indexed account, bool status);
 
     constructor(
-        address _ikigaiToken,
         address _vault,
-        address _treasury
+        address _treasury,
+        address _feeToken
     ) {
-        ikigaiToken = IERC20(_ikigaiToken);
         vault = IIkigaiVaultV2(_vault);
         treasury = IIkigaiTreasuryV2(_treasury);
+        feeToken = IERC20(_feeToken);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     // Fee configuration
-    function configureFees(
-        address token,
-        FeeConfig calldata config,
-        FeeDistribution calldata distribution
+    function updateFeeConfig(
+        bytes32 configId,
+        FeeConfig calldata config
     ) external onlyRole(FEE_MANAGER) {
         require(
-            config.tradingFee <= MAX_FEE &&
-            config.stakingFee <= MAX_FEE &&
-            config.withdrawalFee <= MAX_FEE &&
-            config.performanceFee <= MAX_FEE,
-            "Fee too high"
+            config.tradingFee + config.protocolFee + config.stakingFee + config.treasuryFee <= MAX_FEE,
+            "Total fee too high"
         );
         
-        require(
-            distribution.treasuryShare +
-            distribution.stakingShare +
-            distribution.buybackShare +
-            distribution.burnShare +
-            distribution.referralShare == BASIS_POINTS,
-            "Invalid distribution"
-        );
+        feeConfigs[configId] = config;
         
-        feeConfigs[token] = config;
-        feeDistributions[token] = distribution;
-        
-        emit FeeConfigUpdated(token, "ALL");
+        emit FeeConfigUpdated(configId);
     }
 
     // Fee collection
     function collectFees(
+        bytes32 configId,
         address token,
-        uint256 amount,
-        string calldata feeType
-    ) external onlyRole(COLLECTOR_ROLE) {
-        require(amount > 0, "Invalid amount");
+        uint256 amount
+    ) external nonReentrant whenNotPaused {
+        require(!feeExempt[msg.sender], "Fee exempt");
         
-        FeeCollection storage collection = feeCollections[token];
+        FeeConfig storage config = feeConfigs[configId];
+        require(config.isActive, "Config not active");
         
-        // Update fee collection based on type
-        if (keccak256(bytes(feeType)) == keccak256(bytes("TRADING"))) {
-            collection.tradingFees += amount;
-        } else if (keccak256(bytes(feeType)) == keccak256(bytes("STAKING"))) {
-            collection.stakingFees += amount;
-        } else if (keccak256(bytes(feeType)) == keccak256(bytes("WITHDRAWAL"))) {
-            collection.withdrawalFees += amount;
-        } else if (keccak256(bytes(feeType)) == keccak256(bytes("PERFORMANCE"))) {
-            collection.performanceFees += amount;
+        // Transfer fees
+        IERC20(token).transferFrom(msg.sender, address(this), amount);
+        
+        // Update stats
+        FeeStats storage stats = feeStats[token];
+        stats.totalCollected += amount;
+        stats.periodRevenue += amount;
+        
+        if (stats.periodStart == 0) {
+            stats.periodStart = block.timestamp;
         }
-        
-        // Transfer fees to this contract
-        require(
-            IERC20(token).transferFrom(msg.sender, address(this), amount),
-            "Fee transfer failed"
-        );
         
         emit FeesCollected(token, amount);
     }
 
     // Fee distribution
     function distributeFees(
-        address token
-    ) external nonReentrant {
-        FeeCollection storage collection = feeCollections[token];
+        bytes32 configId
+    ) external onlyRole(DISTRIBUTOR_ROLE) nonReentrant {
+        FeeConfig storage config = feeConfigs[configId];
+        FeeDistribution storage dist = distributions[configId];
+        require(config.isActive && dist.isActive, "Not active");
+        
+        FeeStats storage stats = feeStats[address(feeToken)];
         require(
-            block.timestamp >= collection.lastDistribution + DISTRIBUTION_INTERVAL,
+            block.timestamp >= stats.lastDistribution + DISTRIBUTION_PERIOD,
             "Too soon"
         );
+        require(stats.periodRevenue >= MIN_DISTRIBUTION, "Below minimum");
         
-        uint256 totalFees = collection.tradingFees +
-            collection.stakingFees +
-            collection.withdrawalFees +
-            collection.performanceFees;
-            
-        require(totalFees > 0, "No fees to distribute");
+        uint256 amount = stats.periodRevenue;
         
-        FeeDistribution storage distribution = feeDistributions[token];
+        // Distribute to protocol
+        if (dist.protocolShare > 0) {
+            uint256 protocolAmount = (amount * dist.protocolShare) / 10000;
+            _distributeToProtocol(protocolAmount);
+        }
+        
+        // Distribute to staking
+        if (dist.stakingShare > 0) {
+            uint256 stakingAmount = (amount * dist.stakingShare) / 10000;
+            _distributeToStaking(stakingAmount);
+        }
         
         // Distribute to treasury
-        uint256 treasuryAmount = (totalFees * distribution.treasuryShare) / BASIS_POINTS;
-        if (treasuryAmount > 0) {
-            require(
-                IERC20(token).transfer(address(treasury), treasuryAmount),
-                "Treasury transfer failed"
-            );
+        if (dist.treasuryShare > 0) {
+            uint256 treasuryAmount = (amount * dist.treasuryShare) / 10000;
+            _distributeToTreasury(treasuryAmount);
         }
         
-        // Distribute to staking rewards
-        uint256 stakingAmount = (totalFees * distribution.stakingShare) / BASIS_POINTS;
-        if (stakingAmount > 0) {
-            require(
-                IERC20(token).transfer(address(vault), stakingAmount),
-                "Staking transfer failed"
-            );
+        // Handle burns
+        if (dist.burnShare > 0) {
+            uint256 burnAmount = (amount * dist.burnShare) / 10000;
+            _handleBurn(burnAmount);
         }
         
-        // Handle buyback
-        uint256 buybackAmount = (totalFees * distribution.buybackShare) / BASIS_POINTS;
-        if (buybackAmount > 0) {
-            _executeBuyback(token, buybackAmount);
-        }
+        // Update stats
+        stats.totalDistributed += amount;
+        stats.periodRevenue = 0;
+        stats.lastDistribution = block.timestamp;
+        stats.periodStart = block.timestamp;
         
-        // Handle burn
-        uint256 burnAmount = (totalFees * distribution.burnShare) / BASIS_POINTS;
-        if (burnAmount > 0) {
-            _executeBurn(token, burnAmount);
-        }
-        
-        // Reset collection
-        collection.tradingFees = 0;
-        collection.stakingFees = 0;
-        collection.withdrawalFees = 0;
-        collection.performanceFees = 0;
-        collection.lastDistribution = block.timestamp;
-        
-        emit FeesDistributed(token, totalFees);
-    }
-
-    // Fee exemption management
-    function setFeeExempt(
-        address account,
-        bool exempt
-    ) external onlyRole(FEE_MANAGER) {
-        feeExempt[account] = exempt;
-        emit FeeExemptionUpdated(account, exempt);
+        emit FeesDistributed(configId, amount);
     }
 
     // Internal functions
-    function _executeBuyback(
-        address token,
+    function _distributeToProtocol(
         uint256 amount
     ) internal {
         // Implementation needed
     }
 
-    function _executeBurn(
-        address token,
+    function _distributeToStaking(
         uint256 amount
     ) internal {
         // Implementation needed
+    }
+
+    function _distributeToTreasury(
+        uint256 amount
+    ) internal {
+        // Implementation needed
+    }
+
+    function _handleBurn(
+        uint256 amount
+    ) internal {
+        // Implementation needed
+    }
+
+    function _validateFeeAmount(
+        uint256 amount
+    ) internal pure returns (bool) {
+        // Implementation needed
+        return true;
     }
 
     // View functions
     function getFeeConfig(
-        address token
+        bytes32 configId
     ) external view returns (FeeConfig memory) {
-        return feeConfigs[token];
+        return feeConfigs[configId];
     }
 
-    function getFeeDistribution(
-        address token
+    function getDistribution(
+        bytes32 configId
     ) external view returns (FeeDistribution memory) {
-        return feeDistributions[token];
+        return distributions[configId];
     }
 
-    function getFeeCollection(
+    function getFeeStats(
         address token
-    ) external view returns (FeeCollection memory) {
-        return feeCollections[token];
+    ) external view returns (FeeStats memory) {
+        return feeStats[token];
     }
 
     function isFeeExempt(

@@ -5,212 +5,194 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "../interfaces/IIkigaiVaultV2.sol";
-import "../interfaces/IIkigaiStrategyExtensionsV2.sol";
+import "../interfaces/IIkigaiSecurityV2.sol";
 
 contract IkigaiMonitoringExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
-    bytes32 public constant MONITOR_MANAGER = keccak256("MONITOR_MANAGER");
-    bytes32 public constant ALERT_HANDLER = keccak256("ALERT_HANDLER");
+    bytes32 public constant MONITORING_MANAGER = keccak256("MONITORING_MANAGER");
+    bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");
 
     struct MonitorConfig {
-        uint256 checkInterval;     // Check interval
-        uint256 alertThreshold;    // Alert threshold
-        uint256 criticalThreshold; // Critical threshold
-        uint256 recoveryThreshold; // Recovery threshold
-        bool autoRecover;          // Auto recovery enabled
-    }
-
-    struct SystemHealth {
-        uint256 healthScore;       // Overall health score
-        uint256 lastCheck;         // Last check timestamp
-        uint256 alertCount;        // Number of alerts
-        uint256 criticalCount;     // Number of critical alerts
-        bool isHealthy;            // System health status
+        uint256 checkInterval;    // Check frequency
+        uint256 threshold;        // Alert threshold
+        uint256 cooldown;         // Alert cooldown
+        uint256 severity;         // Alert severity
+        bool isActive;            // Monitor status
     }
 
     struct AlertConfig {
-        uint256 severity;          // Alert severity level
-        uint256 cooldown;          // Alert cooldown period
-        address[] notifyList;      // Notification addresses
-        bool isActive;             // Alert active status
+        bytes32 alertType;        // Alert type
+        uint256 minSeverity;      // Minimum severity
+        address[] notifyList;     // Notification list
+        bool requiresAction;      // Action requirement
+        bool autoResolve;         // Auto resolution
+    }
+
+    struct SystemMetrics {
+        uint256 gasUsed;          // Gas consumption
+        uint256 txCount;          // Transaction count
+        uint256 errorRate;        // Error rate
+        uint256 latency;          // System latency
+        uint256 lastUpdate;       // Last update time
     }
 
     // State variables
     IIkigaiVaultV2 public vault;
-    IIkigaiStrategyExtensionsV2 public strategyExtensions;
+    IIkigaiSecurityV2 public security;
     
     mapping(bytes32 => MonitorConfig) public monitorConfigs;
-    mapping(bytes32 => SystemHealth) public systemHealth;
     mapping(bytes32 => AlertConfig) public alertConfigs;
-    mapping(bytes32 => uint256) public lastAlertTime;
+    mapping(address => SystemMetrics) public systemMetrics;
+    mapping(bytes32 => bool) public activeAlerts;
     
-    uint256 public constant MAX_HEALTH_SCORE = 100;
-    uint256 public constant MIN_CHECK_INTERVAL = 5 minutes;
-    uint256 public constant ALERT_COOLDOWN = 1 hours;
+    uint256 public constant MIN_CHECK_INTERVAL = 1 minutes;
+    uint256 public constant MAX_SEVERITY = 100;
+    uint256 public constant METRICS_TTL = 1 days;
     
     // Events
-    event HealthCheckPerformed(bytes32 indexed component, uint256 score);
+    event MonitorConfigured(bytes32 indexed monitorId);
     event AlertTriggered(bytes32 indexed alertId, uint256 severity);
-    event SystemRecovered(bytes32 indexed component);
-    event ConfigUpdated(bytes32 indexed component, string parameter);
+    event MetricsUpdated(address indexed target, uint256 timestamp);
+    event AlertResolved(bytes32 indexed alertId, string reason);
 
     constructor(
         address _vault,
-        address _strategyExtensions
+        address _security
     ) {
         vault = IIkigaiVaultV2(_vault);
-        strategyExtensions = IIkigaiStrategyExtensionsV2(_strategyExtensions);
+        security = IIkigaiSecurityV2(_security);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
-    // Monitoring configuration
+    // Monitor configuration
     function configureMonitor(
-        bytes32 component,
-        MonitorConfig calldata config
-    ) external onlyRole(MONITOR_MANAGER) {
+        bytes32 monitorId,
+        MonitorConfig calldata config,
+        AlertConfig calldata alertConfig
+    ) external onlyRole(MONITORING_MANAGER) {
         require(config.checkInterval >= MIN_CHECK_INTERVAL, "Interval too short");
-        require(config.alertThreshold < config.criticalThreshold, "Invalid thresholds");
+        require(config.severity <= MAX_SEVERITY, "Severity too high");
         
-        monitorConfigs[component] = config;
+        monitorConfigs[monitorId] = config;
+        alertConfigs[monitorId] = alertConfig;
         
-        emit ConfigUpdated(component, "monitor");
+        emit MonitorConfigured(monitorId);
     }
 
-    // Health checks
-    function performHealthCheck(
-        bytes32 component
-    ) external onlyRole(ALERT_HANDLER) {
-        MonitorConfig storage config = monitorConfigs[component];
-        SystemHealth storage health = systemHealth[component];
+    // System monitoring
+    function updateMetrics(
+        address target,
+        uint256 gasUsed,
+        uint256 txCount,
+        uint256 errorRate,
+        uint256 latency
+    ) external onlyRole(MONITOR_ROLE) {
+        SystemMetrics storage metrics = systemMetrics[target];
         
-        require(
-            block.timestamp >= health.lastCheck + config.checkInterval,
-            "Too frequent"
-        );
-        
-        // Calculate health score
-        uint256 newScore = _calculateHealthScore(component);
-        
-        // Update health status
-        health.healthScore = newScore;
-        health.lastCheck = block.timestamp;
-        health.isHealthy = newScore >= config.recoveryThreshold;
+        // Update metrics
+        metrics.gasUsed = gasUsed;
+        metrics.txCount = txCount;
+        metrics.errorRate = errorRate;
+        metrics.latency = latency;
+        metrics.lastUpdate = block.timestamp;
         
         // Check thresholds
-        if (newScore <= config.criticalThreshold) {
-            health.criticalCount++;
-            _handleCriticalAlert(component);
-        } else if (newScore <= config.alertThreshold) {
-            health.alertCount++;
-            _handleAlert(component);
+        bytes32[] memory alerts = _checkThresholds(target);
+        for (uint256 i = 0; i < alerts.length; i++) {
+            if (alerts[i] != bytes32(0)) {
+                _triggerAlert(alerts[i], target);
+            }
         }
         
-        // Check for recovery
-        if (health.healthScore >= config.recoveryThreshold && !health.isHealthy) {
-            _handleRecovery(component);
-        }
-        
-        emit HealthCheckPerformed(component, newScore);
-    }
-
-    // Alert configuration
-    function configureAlert(
-        bytes32 alertId,
-        AlertConfig calldata config
-    ) external onlyRole(MONITOR_MANAGER) {
-        require(config.severity > 0, "Invalid severity");
-        require(config.notifyList.length > 0, "Empty notify list");
-        
-        alertConfigs[alertId] = config;
-        
-        emit ConfigUpdated(alertId, "alert");
+        emit MetricsUpdated(target, block.timestamp);
     }
 
     // Alert handling
     function handleAlert(
         bytes32 alertId,
-        string calldata message
-    ) external onlyRole(ALERT_HANDLER) {
+        string calldata details
+    ) external onlyRole(MONITOR_ROLE) {
+        require(!activeAlerts[alertId], "Alert already active");
+        
         AlertConfig storage config = alertConfigs[alertId];
-        require(config.isActive, "Alert not active");
+        require(config.alertType != bytes32(0), "Invalid alert");
         
-        // Check cooldown
-        require(
-            block.timestamp >= lastAlertTime[alertId] + config.cooldown,
-            "Cooldown active"
-        );
-        
-        // Update alert time
-        lastAlertTime[alertId] = block.timestamp;
+        // Activate alert
+        activeAlerts[alertId] = true;
         
         // Notify handlers
         for (uint256 i = 0; i < config.notifyList.length; i++) {
-            _notifyHandler(config.notifyList[i], alertId, message);
+            _notifyHandler(config.notifyList[i], alertId, details);
         }
         
-        emit AlertTriggered(alertId, config.severity);
+        // Check for auto-resolution
+        if (config.autoResolve) {
+            _scheduleResolution(alertId);
+        }
+        
+        emit AlertTriggered(alertId, config.minSeverity);
+    }
+
+    // Alert resolution
+    function resolveAlert(
+        bytes32 alertId,
+        string calldata reason
+    ) external onlyRole(MONITOR_ROLE) {
+        require(activeAlerts[alertId], "Alert not active");
+        
+        // Deactivate alert
+        activeAlerts[alertId] = false;
+        
+        // Update handlers
+        AlertConfig storage config = alertConfigs[alertId];
+        for (uint256 i = 0; i < config.notifyList.length; i++) {
+            _updateHandler(config.notifyList[i], alertId, false);
+        }
+        
+        emit AlertResolved(alertId, reason);
     }
 
     // Internal functions
-    function _calculateHealthScore(
-        bytes32 component
-    ) internal view returns (uint256) {
-        // Implementation needed - calculate health based on various metrics
-        return 0;
-    }
-
-    function _handleCriticalAlert(bytes32 component) internal {
-        MonitorConfig storage config = monitorConfigs[component];
-        
-        if (config.autoRecover) {
-            _attemptRecovery(component);
-        }
-        
-        // Notify critical handlers
-        _notifyCriticalHandlers(component);
-    }
-
-    function _handleAlert(bytes32 component) internal {
+    function _checkThresholds(
+        address target
+    ) internal view returns (bytes32[] memory) {
         // Implementation needed
+        return new bytes32[](0);
     }
 
-    function _handleRecovery(bytes32 component) internal {
-        SystemHealth storage health = systemHealth[component];
-        
-        // Reset alert counts
-        health.alertCount = 0;
-        health.criticalCount = 0;
-        health.isHealthy = true;
-        
-        emit SystemRecovered(component);
-    }
-
-    function _attemptRecovery(bytes32 component) internal {
+    function _triggerAlert(
+        bytes32 alertId,
+        address target
+    ) internal {
         // Implementation needed
     }
 
     function _notifyHandler(
         address handler,
         bytes32 alertId,
-        string memory message
+        string calldata details
     ) internal {
         // Implementation needed
     }
 
-    function _notifyCriticalHandlers(bytes32 component) internal {
+    function _scheduleResolution(
+        bytes32 alertId
+    ) internal {
+        // Implementation needed
+    }
+
+    function _updateHandler(
+        address handler,
+        bytes32 alertId,
+        bool active
+    ) internal {
         // Implementation needed
     }
 
     // View functions
     function getMonitorConfig(
-        bytes32 component
+        bytes32 monitorId
     ) external view returns (MonitorConfig memory) {
-        return monitorConfigs[component];
-    }
-
-    function getSystemHealth(
-        bytes32 component
-    ) external view returns (SystemHealth memory) {
-        return systemHealth[component];
+        return monitorConfigs[monitorId];
     }
 
     function getAlertConfig(
@@ -219,9 +201,15 @@ contract IkigaiMonitoringExtensionsV2 is AccessControl, ReentrancyGuard, Pausabl
         return alertConfigs[alertId];
     }
 
-    function getLastAlertTime(
+    function getSystemMetrics(
+        address target
+    ) external view returns (SystemMetrics memory) {
+        return systemMetrics[target];
+    }
+
+    function isAlertActive(
         bytes32 alertId
-    ) external view returns (uint256) {
-        return lastAlertTime[alertId];
+    ) external view returns (bool) {
+        return activeAlerts[alertId];
     }
 } 

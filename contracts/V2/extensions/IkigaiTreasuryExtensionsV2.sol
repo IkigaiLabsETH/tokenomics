@@ -6,226 +6,211 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../interfaces/IIkigaiVaultV2.sol";
-import "../interfaces/IIkigaiGovernanceV2.sol";
+import "../interfaces/IIkigaiFeeExtensionsV2.sol";
 
 contract IkigaiTreasuryExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant TREASURY_MANAGER = keccak256("TREASURY_MANAGER");
     bytes32 public constant ALLOCATOR_ROLE = keccak256("ALLOCATOR_ROLE");
 
-    struct TreasuryAsset {
-        uint256 balance;          // Current balance
-        uint256 allocated;        // Amount allocated
-        uint256 reserved;         // Amount reserved
-        uint256 lastUpdate;       // Last update time
-        bool isActive;            // Whether asset is active
+    struct TreasuryConfig {
+        uint256 minReserve;      // Minimum reserve
+        uint256 maxAllocation;   // Maximum allocation
+        uint256 rebalanceThreshold; // Rebalance threshold
+        uint256 cooldownPeriod;  // Action cooldown
+        bool requiresVote;       // Vote requirement
     }
 
-    struct Allocation {
-        address recipient;        // Recipient address
-        uint256 amount;          // Allocated amount
-        uint256 releaseTime;     // Release timestamp
-        string purpose;          // Allocation purpose
-        bool executed;           // Whether executed
-        bool canceled;           // Whether canceled
+    struct AssetAllocation {
+        uint256 targetWeight;    // Target allocation
+        uint256 currentWeight;   // Current allocation
+        uint256 minWeight;       // Minimum weight
+        uint256 maxWeight;       // Maximum weight
+        bool isActive;           // Asset status
     }
 
-    struct SpendingLimit {
-        uint256 daily;           // Daily limit
-        uint256 monthly;         // Monthly limit
-        uint256 emergency;       // Emergency limit
-        uint256 lastReset;       // Last reset time
-        uint256 spent;           // Amount spent
+    struct TreasuryStats {
+        uint256 totalValue;      // Total value
+        uint256 totalReserves;   // Total reserves
+        uint256 totalAllocated;  // Total allocated
+        uint256 lastRebalance;   // Last rebalance
+        uint256 lastReport;      // Last report time
     }
 
     // State variables
-    IERC20 public immutable ikigaiToken;
     IIkigaiVaultV2 public vault;
-    IIkigaiGovernanceV2 public governance;
+    IIkigaiFeeExtensionsV2 public feeExtension;
+    IERC20 public treasuryToken;
     
-    mapping(address => TreasuryAsset) public treasuryAssets;
-    mapping(bytes32 => Allocation) public allocations;
-    mapping(address => SpendingLimit) public spendingLimits;
-    mapping(address => bool) public whitelistedTokens;
+    mapping(bytes32 => TreasuryConfig) public treasuryConfigs;
+    mapping(address => AssetAllocation) public assetAllocations;
+    mapping(bytes32 => TreasuryStats) public treasuryStats;
+    mapping(address => bool) public approvedAssets;
     
-    uint256 public allocationCount;
-    uint256 public constant MIN_TIMELOCK = 2 days;
-    uint256 public constant MAX_ALLOCATION = 1000000 * 1e18; // 1M tokens
+    uint256 public constant MAX_ALLOCATION = 8000; // 80%
+    uint256 public constant MIN_RESERVE = 1000e18;
+    uint256 public constant REBALANCE_INTERVAL = 1 days;
     
     // Events
-    event AssetRegistered(address indexed token, uint256 initialBalance);
-    event AllocationCreated(bytes32 indexed allocationId, address recipient);
-    event AllocationExecuted(bytes32 indexed allocationId, uint256 amount);
-    event EmergencyWithdrawal(address indexed token, uint256 amount);
+    event TreasuryConfigUpdated(bytes32 indexed configId);
+    event AllocationUpdated(address indexed asset, uint256 weight);
+    event RebalanceExecuted(bytes32 indexed configId, uint256 timestamp);
+    event AssetApproved(address indexed asset, bool status);
 
     constructor(
-        address _ikigaiToken,
         address _vault,
-        address _governance
+        address _feeExtension,
+        address _treasuryToken
     ) {
-        ikigaiToken = IERC20(_ikigaiToken);
         vault = IIkigaiVaultV2(_vault);
-        governance = IIkigaiGovernanceV2(_governance);
+        feeExtension = IIkigaiFeeExtensionsV2(_feeExtension);
+        treasuryToken = IERC20(_treasuryToken);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
+    // Treasury configuration
+    function updateTreasuryConfig(
+        bytes32 configId,
+        TreasuryConfig calldata config
+    ) external onlyRole(TREASURY_MANAGER) {
+        require(config.maxAllocation <= MAX_ALLOCATION, "Allocation too high");
+        require(config.minReserve >= MIN_RESERVE, "Reserve too low");
+        
+        treasuryConfigs[configId] = config;
+        
+        emit TreasuryConfigUpdated(configId);
+    }
+
+    // Asset allocation
+    function updateAllocation(
+        address asset,
+        uint256 targetWeight,
+        uint256 minWeight,
+        uint256 maxWeight
+    ) external onlyRole(ALLOCATOR_ROLE) {
+        require(approvedAssets[asset], "Asset not approved");
+        require(targetWeight <= maxWeight, "Invalid target");
+        require(minWeight <= targetWeight, "Invalid min");
+        
+        AssetAllocation storage allocation = assetAllocations[asset];
+        allocation.targetWeight = targetWeight;
+        allocation.minWeight = minWeight;
+        allocation.maxWeight = maxWeight;
+        allocation.isActive = true;
+        
+        // Check if rebalance needed
+        _checkRebalance(asset);
+        
+        emit AllocationUpdated(asset, targetWeight);
+    }
+
+    // Rebalancing
+    function executeRebalance(
+        bytes32 configId
+    ) external onlyRole(ALLOCATOR_ROLE) nonReentrant {
+        TreasuryConfig storage config = treasuryConfigs[configId];
+        TreasuryStats storage stats = treasuryStats[configId];
+        
+        require(
+            block.timestamp >= stats.lastRebalance + REBALANCE_INTERVAL,
+            "Too soon"
+        );
+        
+        // Check reserves
+        require(
+            _getCurrentReserves() >= config.minReserve,
+            "Insufficient reserves"
+        );
+        
+        // Perform rebalancing
+        _executeRebalance(configId);
+        
+        // Update stats
+        stats.lastRebalance = block.timestamp;
+        stats.totalValue = _calculateTotalValue();
+        stats.totalAllocated = _calculateTotalAllocated();
+        stats.totalReserves = _getCurrentReserves();
+        
+        emit RebalanceExecuted(configId, block.timestamp);
+    }
+
     // Asset management
-    function registerAsset(
-        address token,
-        bool isWhitelisted
+    function approveAsset(
+        address asset,
+        bool status
     ) external onlyRole(TREASURY_MANAGER) {
-        require(!treasuryAssets[token].isActive, "Asset exists");
-        
-        uint256 balance = IERC20(token).balanceOf(address(this));
-        
-        treasuryAssets[token] = TreasuryAsset({
-            balance: balance,
-            allocated: 0,
-            reserved: 0,
-            lastUpdate: block.timestamp,
-            isActive: true
-        });
-        
-        whitelistedTokens[token] = isWhitelisted;
-        
-        emit AssetRegistered(token, balance);
-    }
-
-    // Allocation management
-    function createAllocation(
-        address token,
-        address recipient,
-        uint256 amount,
-        uint256 releaseTime,
-        string calldata purpose
-    ) external onlyRole(ALLOCATOR_ROLE) returns (bytes32) {
-        require(treasuryAssets[token].isActive, "Asset not registered");
-        require(releaseTime >= block.timestamp + MIN_TIMELOCK, "Release too soon");
-        require(amount <= MAX_ALLOCATION, "Amount too large");
-        
-        TreasuryAsset storage asset = treasuryAssets[token];
-        require(
-            amount <= asset.balance - asset.allocated,
-            "Insufficient balance"
-        );
-        
-        bytes32 allocationId = keccak256(abi.encodePacked(
-            token,
-            recipient,
-            block.timestamp,
-            allocationCount++
-        ));
-        
-        allocations[allocationId] = Allocation({
-            recipient: recipient,
-            amount: amount,
-            releaseTime: releaseTime,
-            purpose: purpose,
-            executed: false,
-            canceled: false
-        });
-        
-        asset.allocated += amount;
-        
-        emit AllocationCreated(allocationId, recipient);
-        return allocationId;
-    }
-
-    // Allocation execution
-    function executeAllocation(
-        bytes32 allocationId
-    ) external nonReentrant {
-        Allocation storage allocation = allocations[allocationId];
-        require(!allocation.executed && !allocation.canceled, "Invalid status");
-        require(block.timestamp >= allocation.releaseTime, "Too early");
-        
-        allocation.executed = true;
-        
-        // Update spending tracking
-        _updateSpending(allocation.recipient, allocation.amount);
-        
-        // Transfer tokens
-        require(
-            IERC20(ikigaiToken).transfer(
-                allocation.recipient,
-                allocation.amount
-            ),
-            "Transfer failed"
-        );
-        
-        emit AllocationExecuted(allocationId, allocation.amount);
-    }
-
-    // Emergency functions
-    function emergencyWithdraw(
-        address token,
-        uint256 amount
-    ) external onlyRole(TREASURY_MANAGER) {
-        require(
-            governance.hasEmergencyAccess(msg.sender),
-            "No emergency access"
-        );
-        
-        TreasuryAsset storage asset = treasuryAssets[token];
-        require(asset.isActive, "Asset not registered");
-        require(amount <= asset.balance - asset.allocated, "Insufficient funds");
-        
-        // Transfer tokens
-        require(
-            IERC20(token).transfer(msg.sender, amount),
-            "Transfer failed"
-        );
-        
-        asset.balance -= amount;
-        
-        emit EmergencyWithdrawal(token, amount);
+        approvedAssets[asset] = status;
+        emit AssetApproved(asset, status);
     }
 
     // Internal functions
-    function _updateSpending(
-        address spender,
-        uint256 amount
-    ) internal {
-        SpendingLimit storage limit = spendingLimits[spender];
+    function _checkRebalance(
+        address asset
+    ) internal view {
+        AssetAllocation storage allocation = assetAllocations[asset];
+        uint256 currentWeight = _getCurrentWeight(asset);
         
-        // Reset limits if needed
-        if (block.timestamp >= limit.lastReset + 30 days) {
-            limit.spent = 0;
-            limit.lastReset = block.timestamp;
+        if (currentWeight < allocation.minWeight || currentWeight > allocation.maxWeight) {
+            // Trigger rebalance
+            _rebalanceAsset(asset);
         }
-        
-        // Update spent amount
-        limit.spent += amount;
-        
-        // Check limits
-        require(limit.spent <= limit.monthly, "Monthly limit exceeded");
-        require(
-            amount <= limit.emergency || !governance.isEmergencyActive(),
-            "Emergency limit exceeded"
-        );
+    }
+
+    function _executeRebalance(
+        bytes32 configId
+    ) internal {
+        // Implementation needed
+    }
+
+    function _rebalanceAsset(
+        address asset
+    ) internal {
+        // Implementation needed
+    }
+
+    function _getCurrentReserves() internal view returns (uint256) {
+        // Implementation needed
+        return 0;
+    }
+
+    function _calculateTotalValue() internal view returns (uint256) {
+        // Implementation needed
+        return 0;
+    }
+
+    function _calculateTotalAllocated() internal view returns (uint256) {
+        // Implementation needed
+        return 0;
+    }
+
+    function _getCurrentWeight(
+        address asset
+    ) internal view returns (uint256) {
+        // Implementation needed
+        return 0;
     }
 
     // View functions
-    function getAssetInfo(
-        address token
-    ) external view returns (TreasuryAsset memory) {
-        return treasuryAssets[token];
+    function getTreasuryConfig(
+        bytes32 configId
+    ) external view returns (TreasuryConfig memory) {
+        return treasuryConfigs[configId];
     }
 
-    function getAllocation(
-        bytes32 allocationId
-    ) external view returns (Allocation memory) {
-        return allocations[allocationId];
+    function getAssetAllocation(
+        address asset
+    ) external view returns (AssetAllocation memory) {
+        return assetAllocations[asset];
     }
 
-    function getSpendingLimit(
-        address spender
-    ) external view returns (SpendingLimit memory) {
-        return spendingLimits[spender];
+    function getTreasuryStats(
+        bytes32 configId
+    ) external view returns (TreasuryStats memory) {
+        return treasuryStats[configId];
     }
 
-    function isTokenWhitelisted(
-        address token
+    function isAssetApproved(
+        address asset
     ) external view returns (bool) {
-        return whitelistedTokens[token];
+        return approvedAssets[asset];
     }
 } 

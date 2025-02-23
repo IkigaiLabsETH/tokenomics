@@ -5,226 +5,181 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "../interfaces/IIkigaiMarketplaceV2.sol";
-import "../interfaces/IIkigaiNFTTradingExtensionsV2.sol";
 import "../interfaces/IIkigaiOracleV2.sol";
 
 contract IkigaiAutomationExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant AUTOMATION_MANAGER = keccak256("AUTOMATION_MANAGER");
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
-    struct AutomationTask {
-        bytes32 taskType;         // Type of automation task
-        uint256 interval;         // Execution interval
-        uint256 lastExecution;    // Last execution timestamp
-        bytes parameters;         // Task parameters
-        bool isActive;           // Whether task is active
-    }
-
-    struct TaskResult {
-        bool success;            // Whether execution succeeded
-        uint256 gasUsed;        // Gas used in execution
-        string message;         // Result message
-        uint256 timestamp;      // Execution timestamp
+    struct Task {
+        bytes32 id;              // Task ID
+        address target;          // Target contract
+        bytes data;             // Call data
+        uint256 interval;       // Execution interval
+        uint256 lastRun;        // Last execution time
+        bool isActive;          // Task status
     }
 
     struct KeeperStats {
-        uint256 totalExecutions;  // Total tasks executed
-        uint256 successRate;      // Success rate (basis points)
-        uint256 avgGasUsed;      // Average gas used
-        uint256 lastActive;       // Last active timestamp
-        bool isActive;           // Whether keeper is active
+        uint256 executions;      // Total executions
+        uint256 failures;        // Failed executions
+        uint256 gasUsed;        // Total gas used
+        uint256 rewards;        // Total rewards
+        uint256 lastAction;     // Last action time
+    }
+
+    struct ExecutionConfig {
+        uint256 maxGas;         // Maximum gas
+        uint256 reward;         // Keeper reward
+        uint256 delay;          // Minimum delay
+        uint256 timeout;        // Execution timeout
+        bool requiresApproval;  // Approval requirement
     }
 
     // State variables
     IIkigaiMarketplaceV2 public marketplace;
-    IIkigaiNFTTradingExtensionsV2 public trading;
     IIkigaiOracleV2 public oracle;
     
-    mapping(bytes32 => AutomationTask) public tasks;
-    mapping(bytes32 => TaskResult) public taskResults;
+    mapping(bytes32 => Task) public tasks;
     mapping(address => KeeperStats) public keeperStats;
+    mapping(bytes32 => ExecutionConfig) public executionConfigs;
+    mapping(address => bool) public whitelistedKeepers;
     
+    uint256 public constant MAX_GAS = 5000000;
     uint256 public constant MIN_INTERVAL = 1 minutes;
-    uint256 public constant MAX_INTERVAL = 1 days;
-    uint256 public constant MIN_SUCCESS_RATE = 9500; // 95%
+    uint256 public constant MAX_REWARD = 1 ether;
     
     // Events
-    event TaskCreated(bytes32 indexed taskId, bytes32 taskType);
-    event TaskExecuted(bytes32 indexed taskId, bool success);
-    event KeeperUpdated(address indexed keeper, bool isActive);
-    event AutomationAlert(bytes32 indexed taskId, string message);
+    event TaskCreated(bytes32 indexed taskId, address target);
+    event TaskExecuted(bytes32 indexed taskId, address keeper);
+    event TaskFailed(bytes32 indexed taskId, string reason);
+    event KeeperRewarded(address indexed keeper, uint256 amount);
 
     constructor(
         address _marketplace,
-        address _trading,
         address _oracle
     ) {
         marketplace = IIkigaiMarketplaceV2(_marketplace);
-        trading = IIkigaiNFTTradingExtensionsV2(_trading);
         oracle = IIkigaiOracleV2(_oracle);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     // Task management
-    function createAutomationTask(
+    function createTask(
         bytes32 taskId,
-        bytes32 taskType,
-        uint256 interval,
-        bytes calldata parameters
+        address target,
+        bytes calldata data,
+        uint256 interval
     ) external onlyRole(AUTOMATION_MANAGER) {
         require(!tasks[taskId].isActive, "Task exists");
+        require(target != address(0), "Invalid target");
         require(interval >= MIN_INTERVAL, "Interval too short");
-        require(interval <= MAX_INTERVAL, "Interval too long");
         
-        tasks[taskId] = AutomationTask({
-            taskType: taskType,
+        tasks[taskId] = Task({
+            id: taskId,
+            target: target,
+            data: data,
             interval: interval,
-            lastExecution: block.timestamp,
-            parameters: parameters,
+            lastRun: block.timestamp,
             isActive: true
         });
         
-        emit TaskCreated(taskId, taskType);
+        emit TaskCreated(taskId, target);
     }
 
     // Task execution
     function executeTask(
         bytes32 taskId
-    ) external onlyRole(KEEPER_ROLE) nonReentrant whenNotPaused {
-        AutomationTask storage task = tasks[taskId];
+    ) external onlyRole(KEEPER_ROLE) nonReentrant {
+        require(whitelistedKeepers[msg.sender], "Not whitelisted");
+        
+        Task storage task = tasks[taskId];
         require(task.isActive, "Task not active");
         require(
-            block.timestamp >= task.lastExecution + task.interval,
+            block.timestamp >= task.lastRun + task.interval,
             "Too early"
         );
         
-        // Track gas usage
+        ExecutionConfig storage config = executionConfigs[taskId];
         uint256 startGas = gasleft();
         
-        // Execute task based on type
-        bool success;
-        string memory message;
-        
-        if (task.taskType == "UPDATE_METRICS") {
-            (success, message) = _executeMetricsUpdate(task.parameters);
-        } else if (task.taskType == "CHECK_POSITIONS") {
-            (success, message) = _checkTradingPositions(task.parameters);
-        } else if (task.taskType == "REBALANCE") {
-            (success, message) = _executeRebalancing(task.parameters);
-        } else {
-            revert("Unknown task type");
-        }
-        
-        // Update task result
-        uint256 gasUsed = startGas - gasleft();
-        taskResults[taskId] = TaskResult({
-            success: success,
-            gasUsed: gasUsed,
-            message: message,
-            timestamp: block.timestamp
-        });
-        
-        // Update keeper stats
-        _updateKeeperStats(msg.sender, success, gasUsed);
-        
-        // Update task timestamp
-        task.lastExecution = block.timestamp;
-        
-        emit TaskExecuted(taskId, success);
-        
-        // Check for alerts
-        if (!success) {
-            emit AutomationAlert(taskId, message);
+        // Execute task
+        try IIkigaiMarketplaceV2(task.target).functionCall(task.data) {
+            // Update stats
+            task.lastRun = block.timestamp;
+            
+            uint256 gasUsed = startGas - gasleft();
+            _updateKeeperStats(msg.sender, gasUsed, true);
+            
+            // Reward keeper
+            _rewardKeeper(msg.sender, config.reward);
+            
+            emit TaskExecuted(taskId, msg.sender);
+        } catch Error(string memory reason) {
+            _updateKeeperStats(msg.sender, startGas - gasleft(), false);
+            emit TaskFailed(taskId, reason);
         }
     }
 
     // Keeper management
-    function updateKeeper(
+    function updateKeeperStatus(
         address keeper,
-        bool isActive
+        bool status
     ) external onlyRole(AUTOMATION_MANAGER) {
-        require(keeper != address(0), "Invalid keeper");
-        
-        KeeperStats storage stats = keeperStats[keeper];
-        
-        if (isActive) {
-            require(
-                stats.successRate >= MIN_SUCCESS_RATE,
-                "Success rate too low"
-            );
-            grantRole(KEEPER_ROLE, keeper);
-        } else {
-            revokeRole(KEEPER_ROLE, keeper);
-        }
-        
-        stats.isActive = isActive;
-        emit KeeperUpdated(keeper, isActive);
+        whitelistedKeepers[keeper] = status;
     }
 
-    // Internal task execution functions
-    function _executeMetricsUpdate(
-        bytes memory parameters
-    ) internal returns (bool success, string memory message) {
-        try trading.updateCollectionMetrics(
-            abi.decode(parameters, (address))
-        ) {
-            return (true, "Metrics updated");
-        } catch Error(string memory err) {
-            return (false, err);
-        }
-    }
-
-    function _checkTradingPositions(
-        bytes memory parameters
-    ) internal returns (bool success, string memory message) {
-        // Implementation needed
-        return (false, "Not implemented");
-    }
-
-    function _executeRebalancing(
-        bytes memory parameters
-    ) internal returns (bool success, string memory message) {
-        // Implementation needed
-        return (false, "Not implemented");
-    }
-
+    // Internal functions
     function _updateKeeperStats(
         address keeper,
-        bool success,
-        uint256 gasUsed
+        uint256 gasUsed,
+        bool success
     ) internal {
         KeeperStats storage stats = keeperStats[keeper];
         
-        // Update execution count
-        stats.totalExecutions++;
+        stats.executions++;
+        stats.gasUsed += gasUsed;
+        stats.lastAction = block.timestamp;
         
-        // Update success rate
-        if (success) {
-            stats.successRate = (stats.successRate * (stats.totalExecutions - 1) + 10000) 
-                / stats.totalExecutions;
-        } else {
-            stats.successRate = (stats.successRate * (stats.totalExecutions - 1)) 
-                / stats.totalExecutions;
+        if (!success) {
+            stats.failures++;
+        }
+    }
+
+    function _rewardKeeper(
+        address keeper,
+        uint256 amount
+    ) internal {
+        require(amount <= MAX_REWARD, "Reward too high");
+        
+        KeeperStats storage stats = keeperStats[keeper];
+        stats.rewards += amount;
+        
+        // Transfer reward
+        payable(keeper).transfer(amount);
+        
+        emit KeeperRewarded(keeper, amount);
+    }
+
+    function _validateExecution(
+        bytes32 taskId,
+        address keeper
+    ) internal view returns (bool) {
+        ExecutionConfig storage config = executionConfigs[taskId];
+        
+        if (config.requiresApproval) {
+            // Check approval
+            // Implementation needed
         }
         
-        // Update gas stats
-        stats.avgGasUsed = (stats.avgGasUsed * (stats.totalExecutions - 1) + gasUsed) 
-            / stats.totalExecutions;
-        
-        stats.lastActive = block.timestamp;
+        return true;
     }
 
     // View functions
-    function getTaskInfo(
+    function getTask(
         bytes32 taskId
-    ) external view returns (AutomationTask memory) {
+    ) external view returns (Task memory) {
         return tasks[taskId];
-    }
-
-    function getTaskResult(
-        bytes32 taskId
-    ) external view returns (TaskResult memory) {
-        return taskResults[taskId];
     }
 
     function getKeeperStats(
@@ -233,8 +188,15 @@ contract IkigaiAutomationExtensionsV2 is AccessControl, ReentrancyGuard, Pausabl
         return keeperStats[keeper];
     }
 
-    function getExecutableTasks() external view returns (bytes32[] memory) {
-        // Implementation needed
-        return new bytes32[](0);
+    function getExecutionConfig(
+        bytes32 taskId
+    ) external view returns (ExecutionConfig memory) {
+        return executionConfigs[taskId];
+    }
+
+    function isKeeperWhitelisted(
+        address keeper
+    ) external view returns (bool) {
+        return whitelistedKeepers[keeper];
     }
 } 

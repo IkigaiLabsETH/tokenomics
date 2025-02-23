@@ -13,27 +13,27 @@ contract IkigaiNFTExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant CURATOR_ROLE = keccak256("CURATOR_ROLE");
 
     struct Collection {
-        uint256 floorPrice;        // Current floor price
-        uint256 totalSupply;       // Total supply
-        uint256 uniqueHolders;     // Unique holders
-        uint256 tradeVolume;       // Total trade volume
-        bool isVerified;           // Verification status
+        address nftContract;     // NFT contract address
+        uint256 floorPrice;      // Floor price
+        uint256 totalSupply;     // Total supply
+        uint256 totalHolders;    // Total holders
+        bool isVerified;         // Verification status
     }
 
-    struct TokenMetadata {
-        uint256 rarity;            // Rarity score
-        uint256 lastPrice;         // Last sale price
-        uint256 estimatedValue;    // Estimated value
-        uint256 lastTransfer;      // Last transfer time
-        bool isLocked;             // Lock status
+    struct NFTMetadata {
+        uint256 tokenId;         // Token ID
+        uint256 rarity;          // Rarity score
+        uint256 lastPrice;       // Last sale price
+        uint256 lastSale;        // Last sale time
+        bool isListed;           // Listing status
     }
 
     struct CollectionStats {
-        uint256 bestOffer;         // Best current offer
-        uint256 lowestAsk;         // Lowest ask price
-        uint256 avgPrice7d;        // 7-day average price
-        uint256 volume24h;         // 24h volume
-        uint256 lastUpdate;        // Last update time
+        uint256 volume24h;       // 24h volume
+        uint256 sales24h;        // 24h sales
+        uint256 avgPrice;        // Average price
+        uint256 highestSale;     // Highest sale
+        uint256 lastUpdate;      // Last update time
     }
 
     // State variables
@@ -41,19 +41,19 @@ contract IkigaiNFTExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     IIkigaiOracleV2 public oracle;
     
     mapping(address => Collection) public collections;
-    mapping(address => mapping(uint256 => TokenMetadata)) public tokenMetadata;
+    mapping(address => mapping(uint256 => NFTMetadata)) public nftMetadata;
     mapping(address => CollectionStats) public collectionStats;
-    mapping(address => bool) public supportedCollections;
+    mapping(address => bool) public verifiedCollections;
     
-    uint256 public constant UPDATE_INTERVAL = 1 hours;
+    uint256 public constant MIN_FLOOR_PRICE = 0.01 ether;
     uint256 public constant MAX_RARITY_SCORE = 10000;
-    uint256 public constant PRICE_VALIDITY = 24 hours;
+    uint256 public constant STATS_UPDATE_INTERVAL = 1 hours;
     
     // Events
     event CollectionAdded(address indexed collection, bool verified);
-    event TokenUpdated(address indexed collection, uint256 indexed tokenId);
+    event NFTMetadataUpdated(address indexed collection, uint256 indexed tokenId);
     event StatsUpdated(address indexed collection, uint256 timestamp);
-    event RarityCalculated(address indexed collection, uint256 indexed tokenId);
+    event CollectionVerified(address indexed collection, bool status);
 
     constructor(
         address _marketplace,
@@ -66,106 +66,79 @@ contract IkigaiNFTExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
 
     // Collection management
     function addCollection(
-        address collection,
+        address nftContract,
         bool verified
     ) external onlyRole(NFT_MANAGER) {
-        require(!supportedCollections[collection], "Already supported");
-        require(collection != address(0), "Invalid collection");
+        require(nftContract != address(0), "Invalid address");
+        require(!collections[nftContract].isVerified, "Already added");
         
-        // Initialize collection data
-        collections[collection] = Collection({
+        IERC721 nft = IERC721(nftContract);
+        
+        collections[nftContract] = Collection({
+            nftContract: nftContract,
             floorPrice: 0,
-            totalSupply: IERC721(collection).totalSupply(),
-            uniqueHolders: 0,
-            tradeVolume: 0,
+            totalSupply: nft.totalSupply(),
+            totalHolders: _calculateHolders(nftContract),
             isVerified: verified
         });
         
-        supportedCollections[collection] = true;
+        verifiedCollections[nftContract] = verified;
         
-        emit CollectionAdded(collection, verified);
+        emit CollectionAdded(nftContract, verified);
     }
 
-    // Token metadata
-    function updateTokenMetadata(
+    // Metadata management
+    function updateNFTMetadata(
         address collection,
-        uint256 tokenId
+        uint256 tokenId,
+        uint256 rarity,
+        uint256 price
     ) external onlyRole(CURATOR_ROLE) {
-        require(supportedCollections[collection], "Collection not supported");
+        require(collections[collection].isVerified, "Not verified");
+        require(rarity <= MAX_RARITY_SCORE, "Invalid rarity");
         
-        TokenMetadata storage metadata = tokenMetadata[collection][tokenId];
+        NFTMetadata storage metadata = nftMetadata[collection][tokenId];
+        metadata.tokenId = tokenId;
+        metadata.rarity = rarity;
         
-        // Update metadata
-        metadata.rarity = _calculateRarity(collection, tokenId);
-        metadata.estimatedValue = _estimateValue(collection, tokenId);
-        metadata.lastTransfer = block.timestamp;
+        if (price > 0) {
+            metadata.lastPrice = price;
+            metadata.lastSale = block.timestamp;
+        }
         
-        emit TokenUpdated(collection, tokenId);
+        emit NFTMetadataUpdated(collection, tokenId);
     }
 
-    // Collection statistics
+    // Stats management
     function updateCollectionStats(
-        address collection
+        address collection,
+        uint256 volume,
+        uint256 sales,
+        uint256 price
     ) external onlyRole(CURATOR_ROLE) {
-        require(supportedCollections[collection], "Collection not supported");
-        
         CollectionStats storage stats = collectionStats[collection];
         require(
-            block.timestamp >= stats.lastUpdate + UPDATE_INTERVAL,
+            block.timestamp >= stats.lastUpdate + STATS_UPDATE_INTERVAL,
             "Too frequent"
         );
         
         // Update stats
-        stats.bestOffer = _getBestOffer(collection);
-        stats.lowestAsk = _getLowestAsk(collection);
-        stats.avgPrice7d = _calculateAvgPrice(collection);
-        stats.volume24h = _get24hVolume(collection);
+        stats.volume24h = volume;
+        stats.sales24h = sales;
+        stats.avgPrice = _calculateAvgPrice(stats.avgPrice, price, sales);
+        stats.highestSale = price > stats.highestSale ? price : stats.highestSale;
         stats.lastUpdate = block.timestamp;
+        
+        // Update floor price if needed
+        if (price < collections[collection].floorPrice) {
+            collections[collection].floorPrice = price;
+        }
         
         emit StatsUpdated(collection, block.timestamp);
     }
 
-    // Rarity calculation
-    function calculateRarity(
-        address collection,
-        uint256 tokenId
-    ) external onlyRole(CURATOR_ROLE) {
-        require(supportedCollections[collection], "Collection not supported");
-        
-        // Calculate rarity score
-        uint256 rarity = _calculateRarity(collection, tokenId);
-        
-        // Update metadata
-        tokenMetadata[collection][tokenId].rarity = rarity;
-        
-        emit RarityCalculated(collection, tokenId);
-    }
-
     // Internal functions
-    function _calculateRarity(
-        address collection,
-        uint256 tokenId
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
-    }
-
-    function _estimateValue(
-        address collection,
-        uint256 tokenId
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
-    }
-
-    function _getBestOffer(
-        address collection
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
-    }
-
-    function _getLowestAsk(
+    function _calculateHolders(
         address collection
     ) internal view returns (uint256) {
         // Implementation needed
@@ -173,17 +146,24 @@ contract IkigaiNFTExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     }
 
     function _calculateAvgPrice(
-        address collection
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
+        uint256 currentAvg,
+        uint256 newPrice,
+        uint256 totalSales
+    ) internal pure returns (uint256) {
+        if (totalSales == 0) return newPrice;
+        return (currentAvg * (totalSales - 1) + newPrice) / totalSales;
     }
 
-    function _get24hVolume(
-        address collection
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
+    function _validateNFT(
+        address collection,
+        uint256 tokenId
+    ) internal view returns (bool) {
+        IERC721 nft = IERC721(collection);
+        try nft.ownerOf(tokenId) returns (address) {
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     // View functions
@@ -193,11 +173,11 @@ contract IkigaiNFTExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         return collections[collection];
     }
 
-    function getTokenMetadata(
+    function getNFTMetadata(
         address collection,
         uint256 tokenId
-    ) external view returns (TokenMetadata memory) {
-        return tokenMetadata[collection][tokenId];
+    ) external view returns (NFTMetadata memory) {
+        return nftMetadata[collection][tokenId];
     }
 
     function getCollectionStats(
@@ -206,9 +186,9 @@ contract IkigaiNFTExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         return collectionStats[collection];
     }
 
-    function isCollectionSupported(
+    function isCollectionVerified(
         address collection
     ) external view returns (bool) {
-        return supportedCollections[collection];
+        return verifiedCollections[collection];
     }
 } 

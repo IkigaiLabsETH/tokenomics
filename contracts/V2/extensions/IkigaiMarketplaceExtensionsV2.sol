@@ -5,13 +5,16 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../interfaces/IIkigaiMarketplaceV2.sol";
 import "../interfaces/IIkigaiOracleV2.sol";
 import "../interfaces/IIkigaiFeeExtensionsV2.sol";
+import "../interfaces/IIkigaiVaultV2.sol";
 
 contract IkigaiMarketplaceExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant MARKETPLACE_MANAGER = keccak256("MARKETPLACE_MANAGER");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant CURATOR_ROLE = keccak256("CURATOR_ROLE");
 
     struct MarketConfig {
         uint256 minListingDuration;  // Minimum listing duration
@@ -80,6 +83,8 @@ contract IkigaiMarketplaceExtensionsV2 is AccessControl, ReentrancyGuard, Pausab
     IIkigaiMarketplaceV2 public marketplace;
     IIkigaiOracleV2 public oracle;
     IIkigaiFeeExtensionsV2 public feeExtension;
+    IIkigaiVaultV2 public vault;
+    IERC20 public paymentToken;
     
     mapping(address => MarketConfig) public marketConfigs;
     mapping(address => CollectionStats) public collectionStats;
@@ -89,6 +94,9 @@ contract IkigaiMarketplaceExtensionsV2 is AccessControl, ReentrancyGuard, Pausab
     mapping(address => mapping(uint256 => Auction)) public auctions;
     mapping(address => mapping(uint256 => Offer[])) public offers;
     mapping(address => bool) public supportedCollections;
+    mapping(bytes32 => Listing) public listingsById;
+    mapping(bytes32 => mapping(address => Offer)) public offersById;
+    mapping(address => bool) public approvedCollections;
     
     uint256 public constant MAX_FEE = 1000; // 10%
     uint256 public constant MAX_LISTINGS = 100;
@@ -96,28 +104,35 @@ contract IkigaiMarketplaceExtensionsV2 is AccessControl, ReentrancyGuard, Pausab
     uint256 public constant MIN_AUCTION_DURATION = 1 hours;
     uint256 public constant MAX_AUCTION_DURATION = 7 days;
     uint256 public constant MAX_OFFERS = 50;
+    uint256 public constant MIN_LISTING_DURATION = 1 hours;
+    uint256 public constant MAX_LISTING_DURATION = 30 days;
     
     // Events
     event MarketConfigUpdated(address indexed collection, string parameter);
     event CollectionVerified(address indexed collection, bool status);
     event MarketActivityRecorded(address indexed collection, ActivityType activityType);
     event StatsUpdated(address indexed collection, uint256 floorPrice);
-    event ListingCreated(address indexed collection, uint256 indexed tokenId, uint256 price);
+    event ListingCreated(bytes32 indexed listingId, address seller, uint256 price);
     event ListingUpdated(address indexed collection, uint256 indexed tokenId, uint256 newPrice);
     event ListingCancelled(address indexed collection, uint256 indexed tokenId);
-    event ListingSold(address indexed collection, uint256 indexed tokenId, address buyer, uint256 price);
+    event ListingSold(bytes32 indexed listingId, address buyer, uint256 price);
     event AuctionBid(address indexed collection, uint256 indexed tokenId, address bidder, uint256 amount);
     event OfferCreated(address indexed collection, uint256 indexed tokenId, address buyer, uint256 price);
-    event OfferAccepted(address indexed collection, uint256 indexed tokenId, address buyer, uint256 price);
+    event OfferAccepted(bytes32 indexed listingId, address buyer, uint256 price);
+    event OfferMade(bytes32 indexed listingId, address buyer, uint256 price);
 
     constructor(
         address _marketplace,
         address _oracle,
-        address _feeExtension
+        address _feeExtension,
+        address _vault,
+        address _paymentToken
     ) {
         marketplace = IIkigaiMarketplaceV2(_marketplace);
         oracle = IIkigaiOracleV2(_oracle);
         feeExtension = IIkigaiFeeExtensionsV2(_feeExtension);
+        vault = IIkigaiVaultV2(_vault);
+        paymentToken = IERC20(_paymentToken);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
@@ -249,7 +264,7 @@ contract IkigaiMarketplaceExtensionsV2 is AccessControl, ReentrancyGuard, Pausab
             });
         }
         
-        emit ListingCreated(collection, tokenId, price);
+        emit ListingCreated(keccak256(abi.encode(msg.sender, collection, tokenId, block.timestamp)), msg.sender, price);
     }
 
     // Auction bidding
@@ -331,7 +346,7 @@ contract IkigaiMarketplaceExtensionsV2 is AccessControl, ReentrancyGuard, Pausab
         // Update listing
         listing.isActive = false;
         
-        emit ListingSold(collection, tokenId, msg.sender, msg.value);
+        emit ListingSold(keccak256(abi.encode(msg.sender, collection, tokenId, block.timestamp)), msg.sender, msg.value);
     }
 
     // Internal functions
@@ -451,5 +466,24 @@ contract IkigaiMarketplaceExtensionsV2 is AccessControl, ReentrancyGuard, Pausab
         address collection
     ) external view returns (bool) {
         return supportedCollections[collection];
+    }
+
+    function getListingById(
+        bytes32 listingId
+    ) external view returns (Listing memory) {
+        return listingsById[listingId];
+    }
+
+    function getOfferById(
+        bytes32 listingId,
+        address buyer
+    ) external view returns (Offer memory) {
+        return offersById[listingId][buyer];
+    }
+
+    function isCollectionApproved(
+        address collection
+    ) external view returns (bool) {
+        return approvedCollections[collection];
     }
 } 

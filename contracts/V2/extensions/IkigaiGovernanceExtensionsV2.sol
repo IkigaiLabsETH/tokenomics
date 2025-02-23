@@ -6,104 +6,117 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../interfaces/IIkigaiVaultV2.sol";
-import "../interfaces/IIkigaiStakingV2.sol";
+import "../interfaces/IIkigaiTimelockV2.sol";
 
 contract IkigaiGovernanceExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant GOVERNANCE_MANAGER = keccak256("GOVERNANCE_MANAGER");
-    bytes32 public constant PROPOSAL_CREATOR = keccak256("PROPOSAL_CREATOR");
+    bytes32 public constant PROPOSER_ROLE = keccak256("PROPOSER_ROLE");
 
     struct Proposal {
-        address proposer;          // Proposal creator
-        string description;        // Proposal description
-        bytes[] actions;          // Actions to execute
-        uint256 startTime;        // Voting start time
-        uint256 endTime;          // Voting end time
-        uint256 forVotes;         // Votes in favor
-        uint256 againstVotes;     // Votes against
-        uint256 quorum;           // Required quorum
-        bool executed;            // Whether executed
-        bool canceled;            // Whether canceled
+        bytes32 id;              // Proposal ID
+        string title;            // Proposal title
+        string description;      // Proposal description
+        address[] targets;       // Target contracts
+        uint256[] values;        // ETH values
+        bytes[] calldatas;       // Call data array
+        uint256 startBlock;      // Start block
+        uint256 endBlock;        // End block
+        bool executed;           // Execution status
+        bool canceled;           // Cancellation status
     }
 
     struct Vote {
-        bool support;             // Whether in favor
-        uint256 power;           // Voting power
-        uint256 timestamp;        // Vote timestamp
+        bool support;            // Support status
+        uint256 votes;           // Vote weight
         string reason;           // Vote reason
+        uint256 timestamp;       // Vote time
     }
 
-    struct VotingPower {
-        uint256 tokenPower;       // Power from tokens
-        uint256 stakingPower;     // Power from staking
-        uint256 nftPower;         // Power from NFTs
-        uint256 lastUpdate;       // Last update time
-        uint256 lockEndTime;      // Power lock end time
+    struct ProposalConfig {
+        uint256 threshold;       // Proposal threshold
+        uint256 quorum;          // Required quorum
+        uint256 votingDelay;     // Blocks before voting
+        uint256 votingPeriod;    // Voting duration
+        bool requiresTimelock;   // Timelock requirement
     }
 
     // State variables
-    IERC20 public immutable ikigaiToken;
     IIkigaiVaultV2 public vault;
-    IIkigaiStakingV2 public staking;
+    IIkigaiTimelockV2 public timelock;
+    IERC20 public governanceToken;
     
-    mapping(uint256 => Proposal) public proposals;
-    mapping(uint256 => mapping(address => Vote)) public votes;
-    mapping(address => VotingPower) public votingPower;
-    mapping(address => uint256) public proposalNonce;
+    mapping(bytes32 => Proposal) public proposals;
+    mapping(bytes32 => mapping(address => Vote)) public votes;
+    mapping(bytes32 => ProposalConfig) public proposalConfigs;
+    mapping(address => uint256) public proposalPowers;
     
-    uint256 public proposalCount;
-    uint256 public constant MIN_PROPOSAL_THRESHOLD = 100000 * 1e18; // 100k tokens
-    uint256 public constant MIN_VOTING_PERIOD = 3 days;
-    uint256 public constant MAX_VOTING_PERIOD = 14 days;
+    uint256 public constant MIN_PROPOSAL_THRESHOLD = 100000e18; // 100k tokens
+    uint256 public constant MIN_VOTING_PERIOD = 5760; // ~24 hours
+    uint256 public constant MAX_VOTING_PERIOD = 40320; // ~1 week
     
     // Events
-    event ProposalCreated(uint256 indexed proposalId, address proposer);
-    event VoteCast(uint256 indexed proposalId, address indexed voter, bool support);
-    event ProposalExecuted(uint256 indexed proposalId);
-    event ProposalCanceled(uint256 indexed proposalId);
+    event ProposalCreated(bytes32 indexed proposalId, address proposer);
+    event VoteCast(bytes32 indexed proposalId, address indexed voter, bool support);
+    event ProposalExecuted(bytes32 indexed proposalId);
+    event ProposalCanceled(bytes32 indexed proposalId);
 
     constructor(
-        address _ikigaiToken,
         address _vault,
-        address _staking
+        address _timelock,
+        address _governanceToken
     ) {
-        ikigaiToken = IERC20(_ikigaiToken);
         vault = IIkigaiVaultV2(_vault);
-        staking = IIkigaiStakingV2(_staking);
+        timelock = IIkigaiTimelockV2(_timelock);
+        governanceToken = IERC20(_governanceToken);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     // Proposal management
     function createProposal(
+        string calldata title,
         string calldata description,
-        bytes[] calldata actions,
-        uint256 votingPeriod
-    ) external returns (uint256) {
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata calldatas
+    ) external onlyRole(PROPOSER_ROLE) returns (bytes32) {
+        require(targets.length > 0, "Empty proposal");
         require(
-            getVotingPower(msg.sender) >= MIN_PROPOSAL_THRESHOLD,
-            "Insufficient power"
-        );
-        require(
-            votingPeriod >= MIN_VOTING_PERIOD &&
-            votingPeriod <= MAX_VOTING_PERIOD,
-            "Invalid period"
+            targets.length == values.length &&
+            targets.length == calldatas.length,
+            "Array length mismatch"
         );
         
-        uint256 proposalId = ++proposalCount;
+        bytes32 proposalId = keccak256(
+            abi.encode(
+                title,
+                targets,
+                values,
+                calldatas,
+                block.number
+            )
+        );
         
+        require(!proposals[proposalId].executed, "Already exists");
+        
+        ProposalConfig storage config = proposalConfigs[proposalId];
+        require(
+            proposalPowers[msg.sender] >= config.threshold,
+            "Below threshold"
+        );
+        
+        // Create proposal
         proposals[proposalId] = Proposal({
-            proposer: msg.sender,
+            id: proposalId,
+            title: title,
             description: description,
-            actions: actions,
-            startTime: block.timestamp,
-            endTime: block.timestamp + votingPeriod,
-            forVotes: 0,
-            againstVotes: 0,
-            quorum: _calculateQuorum(),
+            targets: targets,
+            values: values,
+            calldatas: calldatas,
+            startBlock: block.number + config.votingDelay,
+            endBlock: block.number + config.votingDelay + config.votingPeriod,
             executed: false,
             canceled: false
         });
-        
-        proposalNonce[msg.sender]++;
         
         emit ProposalCreated(proposalId, msg.sender);
         return proposalId;
@@ -111,119 +124,112 @@ contract IkigaiGovernanceExtensionsV2 is AccessControl, ReentrancyGuard, Pausabl
 
     // Voting
     function castVote(
-        uint256 proposalId,
+        bytes32 proposalId,
         bool support,
         string calldata reason
-    ) external {
+    ) external nonReentrant {
         Proposal storage proposal = proposals[proposalId];
-        require(block.timestamp <= proposal.endTime, "Voting ended");
-        require(!proposal.executed && !proposal.canceled, "Proposal finalized");
+        require(!proposal.executed && !proposal.canceled, "Invalid status");
+        require(
+            block.number >= proposal.startBlock &&
+            block.number <= proposal.endBlock,
+            "Not in voting period"
+        );
         
-        uint256 power = getVotingPower(msg.sender);
-        require(power > 0, "No voting power");
-        
-        Vote storage vote = votes[proposalId][msg.sender];
-        require(vote.timestamp == 0, "Already voted");
+        uint256 votes = governanceToken.balanceOf(msg.sender);
+        require(votes > 0, "No voting power");
         
         // Record vote
-        vote.support = support;
-        vote.power = power;
-        vote.timestamp = block.timestamp;
-        vote.reason = reason;
-        
-        // Update totals
-        if (support) {
-            proposal.forVotes += power;
-        } else {
-            proposal.againstVotes += power;
-        }
+        votes[proposalId][msg.sender] = Vote({
+            support: support,
+            votes: votes,
+            reason: reason,
+            timestamp: block.timestamp
+        });
         
         emit VoteCast(proposalId, msg.sender, support);
     }
 
     // Proposal execution
     function executeProposal(
-        uint256 proposalId
+        bytes32 proposalId
     ) external nonReentrant {
         Proposal storage proposal = proposals[proposalId];
-        require(block.timestamp > proposal.endTime, "Voting ongoing");
-        require(!proposal.executed && !proposal.canceled, "Already finalized");
+        require(!proposal.executed && !proposal.canceled, "Invalid status");
+        require(block.number > proposal.endBlock, "Voting ongoing");
+        
+        ProposalConfig storage config = proposalConfigs[proposalId];
         require(
-            proposal.forVotes + proposal.againstVotes >= proposal.quorum,
+            _getVotes(proposalId, true) >= config.quorum,
             "Quorum not reached"
         );
-        require(
-            proposal.forVotes > proposal.againstVotes,
-            "Proposal rejected"
-        );
         
-        proposal.executed = true;
-        
-        // Execute actions
-        for (uint256 i = 0; i < proposal.actions.length; i++) {
-            _executeAction(proposal.actions[i]);
+        if (config.requiresTimelock) {
+            // Queue in timelock
+            timelock.queueOperations(
+                proposal.targets,
+                proposal.values,
+                proposal.calldatas
+            );
+        } else {
+            // Direct execution
+            _executeProposal(proposal);
         }
         
+        proposal.executed = true;
         emit ProposalExecuted(proposalId);
     }
 
-    // Voting power
-    function getVotingPower(
-        address account
-    ) public view returns (uint256) {
-        VotingPower storage power = votingPower[account];
-        
-        // Get token balance
-        uint256 tokenPower = ikigaiToken.balanceOf(account);
-        
-        // Get staking power
-        uint256 stakingPower = staking.getStakedBalance(account) * 2; // 2x multiplier
-        
-        // Get NFT power
-        uint256 nftPower = _calculateNFTPower(account);
-        
-        return tokenPower + stakingPower + nftPower;
-    }
-
     // Internal functions
-    function _calculateQuorum() internal view returns (uint256) {
-        return ikigaiToken.totalSupply() * 4 / 10; // 40% quorum
+    function _executeProposal(
+        Proposal storage proposal
+    ) internal {
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
+            (bool success,) = proposal.targets[i].call{value: proposal.values[i]}(
+                proposal.calldatas[i]
+            );
+            require(success, "Execution failed");
+        }
     }
 
-    function _calculateNFTPower(
-        address account
+    function _getVotes(
+        bytes32 proposalId,
+        bool support
     ) internal view returns (uint256) {
         // Implementation needed
         return 0;
     }
 
-    function _executeAction(bytes memory action) internal {
+    function _validateProposal(
+        bytes32 proposalId
+    ) internal view returns (bool) {
         // Implementation needed
+        return false;
     }
 
     // View functions
     function getProposal(
-        uint256 proposalId
+        bytes32 proposalId
     ) external view returns (Proposal memory) {
         return proposals[proposalId];
     }
 
     function getVote(
-        uint256 proposalId,
+        bytes32 proposalId,
         address voter
     ) external view returns (Vote memory) {
         return votes[proposalId][voter];
     }
 
-    function getVotingPowerBreakdown(
-        address account
-    ) external view returns (VotingPower memory) {
-        return votingPower[account];
+    function getProposalConfig(
+        bytes32 proposalId
+    ) external view returns (ProposalConfig memory) {
+        return proposalConfigs[proposalId];
     }
 
-    function getProposalCount(
+    function getProposalPower(
         address proposer
     ) external view returns (uint256) {
-        return proposalNonce[proposer];
+        return proposalPowers[proposer];
     }
 } 

@@ -13,27 +13,27 @@ contract IkigaiYieldExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant HARVESTER_ROLE = keccak256("HARVESTER_ROLE");
 
     struct YieldPool {
-        address rewardToken;     // Reward token address
+        address rewardToken;     // Reward token
         uint256 rewardRate;      // Rewards per second
         uint256 totalStaked;     // Total staked amount
-        uint256 lastUpdate;      // Last update time
+        uint256 accRewardPerShare; // Accumulated rewards per share
         bool isActive;           // Pool status
     }
 
     struct UserPosition {
-        uint256 stakedAmount;    // User staked amount
+        uint256 amount;          // Staked amount
         uint256 rewardDebt;      // Reward debt
         uint256 pendingRewards;  // Pending rewards
-        uint256 lastClaim;       // Last claim time
-        bool isActive;           // Position status
+        uint256 lastHarvest;     // Last harvest time
+        bool isCompounding;      // Auto-compound status
     }
 
-    struct PoolStats {
-        uint256 totalUsers;      // Total users
-        uint256 totalRewards;    // Total rewards distributed
-        uint256 avgAPY;         // Average APY
-        uint256 tvl;            // Total value locked
-        uint256 lastUpdate;     // Last update time
+    struct PoolConfig {
+        uint256 minStake;        // Minimum stake
+        uint256 harvestDelay;    // Harvest cooldown
+        uint256 performanceFee;  // Performance fee
+        uint256 withdrawalFee;   // Withdrawal fee
+        bool requiresLock;       // Lock requirement
     }
 
     // State variables
@@ -42,18 +42,18 @@ contract IkigaiYieldExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     
     mapping(bytes32 => YieldPool) public yieldPools;
     mapping(bytes32 => mapping(address => UserPosition)) public userPositions;
-    mapping(bytes32 => PoolStats) public poolStats;
+    mapping(bytes32 => PoolConfig) public poolConfigs;
     mapping(address => bool) public supportedTokens;
     
-    uint256 public constant BASIS_POINTS = 10000;
-    uint256 public constant MIN_STAKE = 100;
-    uint256 public constant CLAIM_INTERVAL = 1 days;
+    uint256 public constant REWARD_PRECISION = 1e12;
+    uint256 public constant MAX_PERFORMANCE_FEE = 2000; // 20%
+    uint256 public constant MIN_HARVEST_DELAY = 1 hours;
     
     // Events
     event PoolCreated(bytes32 indexed poolId, address rewardToken);
     event Staked(bytes32 indexed poolId, address indexed user, uint256 amount);
-    event Unstaked(bytes32 indexed poolId, address indexed user, uint256 amount);
-    event RewardsClaimed(bytes32 indexed poolId, address indexed user, uint256 amount);
+    event Harvested(bytes32 indexed poolId, address indexed user, uint256 amount);
+    event Withdrawn(bytes32 indexed poolId, address indexed user, uint256 amount);
 
     constructor(
         address _vault,
@@ -65,24 +65,25 @@ contract IkigaiYieldExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     }
 
     // Pool management
-    function createPool(
+    function createYieldPool(
         bytes32 poolId,
         address rewardToken,
-        uint256 rewardRate
+        PoolConfig calldata config
     ) external onlyRole(YIELD_MANAGER) {
         require(!yieldPools[poolId].isActive, "Pool exists");
-        require(rewardToken != address(0), "Invalid token");
-        require(rewardRate > 0, "Invalid rate");
+        require(supportedTokens[rewardToken], "Token not supported");
+        require(config.performanceFee <= MAX_PERFORMANCE_FEE, "Fee too high");
+        require(config.harvestDelay >= MIN_HARVEST_DELAY, "Delay too short");
         
         yieldPools[poolId] = YieldPool({
             rewardToken: rewardToken,
-            rewardRate: rewardRate,
+            rewardRate: 0,
             totalStaked: 0,
-            lastUpdate: block.timestamp,
+            accRewardPerShare: 0,
             isActive: true
         });
         
-        supportedTokens[rewardToken] = true;
+        poolConfigs[poolId] = config;
         
         emit PoolCreated(poolId, rewardToken);
     }
@@ -90,17 +91,20 @@ contract IkigaiYieldExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     // Staking operations
     function stake(
         bytes32 poolId,
-        uint256 amount
+        uint256 amount,
+        bool autoCompound
     ) external nonReentrant whenNotPaused {
-        require(amount >= MIN_STAKE, "Amount too small");
-        
         YieldPool storage pool = yieldPools[poolId];
         require(pool.isActive, "Pool not active");
         
-        UserPosition storage position = userPositions[poolId][msg.sender];
+        PoolConfig storage config = poolConfigs[poolId];
+        require(amount >= config.minStake, "Below min stake");
         
         // Update rewards
-        if (position.isActive) {
+        _updatePool(poolId);
+        
+        // Handle existing position
+        if (userPositions[poolId][msg.sender].amount > 0) {
             _harvestRewards(poolId, msg.sender);
         }
         
@@ -108,19 +112,12 @@ contract IkigaiYieldExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         IERC20(pool.rewardToken).transferFrom(msg.sender, address(this), amount);
         
         // Update position
-        position.stakedAmount += amount;
-        position.rewardDebt = _calculateRewardDebt(poolId, position.stakedAmount);
-        position.isActive = true;
+        UserPosition storage position = userPositions[poolId][msg.sender];
+        position.amount += amount;
+        position.rewardDebt = (position.amount * pool.accRewardPerShare) / REWARD_PRECISION;
+        position.isCompounding = autoCompound;
         
-        // Update pool
         pool.totalStaked += amount;
-        pool.lastUpdate = block.timestamp;
-        
-        // Update stats
-        if (!position.isActive) {
-            poolStats[poolId].totalUsers++;
-        }
-        poolStats[poolId].tvl += amount;
         
         emit Staked(poolId, msg.sender, amount);
     }
@@ -130,62 +127,66 @@ contract IkigaiYieldExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         bytes32 poolId
     ) external nonReentrant {
         UserPosition storage position = userPositions[poolId][msg.sender];
-        require(position.isActive, "No active position");
+        require(position.amount > 0, "No position");
+        
+        PoolConfig storage config = poolConfigs[poolId];
         require(
-            block.timestamp >= position.lastClaim + CLAIM_INTERVAL,
-            "Too frequent"
+            block.timestamp >= position.lastHarvest + config.harvestDelay,
+            "Too soon"
         );
         
-        uint256 rewards = _harvestRewards(poolId, msg.sender);
-        require(rewards > 0, "No rewards");
-        
-        // Transfer rewards
-        YieldPool storage pool = yieldPools[poolId];
-        IERC20(pool.rewardToken).transfer(msg.sender, rewards);
-        
-        // Update stats
-        poolStats[poolId].totalRewards += rewards;
-        
-        emit RewardsClaimed(poolId, msg.sender, rewards);
+        _updatePool(poolId);
+        _harvestRewards(poolId, msg.sender);
     }
 
     // Internal functions
+    function _updatePool(
+        bytes32 poolId
+    ) internal {
+        YieldPool storage pool = yieldPools[poolId];
+        
+        if (pool.totalStaked == 0) return;
+        
+        uint256 blockReward = _calculateBlockReward(poolId);
+        pool.accRewardPerShare += (blockReward * REWARD_PRECISION) / pool.totalStaked;
+    }
+
     function _harvestRewards(
         bytes32 poolId,
         address user
-    ) internal returns (uint256) {
-        UserPosition storage position = userPositions[poolId][msg.sender];
-        
-        uint256 pending = _calculatePendingRewards(poolId, user);
-        if (pending > 0) {
-            position.pendingRewards += pending;
-        }
-        
-        position.lastClaim = block.timestamp;
-        position.rewardDebt = _calculateRewardDebt(poolId, position.stakedAmount);
-        
-        return pending;
-    }
-
-    function _calculatePendingRewards(
-        bytes32 poolId,
-        address user
-    ) internal view returns (uint256) {
+    ) internal {
         YieldPool storage pool = yieldPools[poolId];
         UserPosition storage position = userPositions[poolId][user];
+        PoolConfig storage config = poolConfigs[poolId];
         
-        uint256 timeElapsed = block.timestamp - pool.lastUpdate;
-        uint256 rewardPerToken = pool.rewardRate * timeElapsed;
+        uint256 pending = (position.amount * pool.accRewardPerShare) / REWARD_PRECISION - position.rewardDebt;
         
-        return (position.stakedAmount * rewardPerToken) / pool.totalStaked;
+        if (pending > 0) {
+            // Calculate fees
+            uint256 fee = (pending * config.performanceFee) / 10000;
+            uint256 reward = pending - fee;
+            
+            // Handle rewards
+            if (position.isCompounding) {
+                position.amount += reward;
+                pool.totalStaked += reward;
+            } else {
+                IERC20(pool.rewardToken).transfer(user, reward);
+            }
+            
+            // Update state
+            position.rewardDebt = (position.amount * pool.accRewardPerShare) / REWARD_PRECISION;
+            position.lastHarvest = block.timestamp;
+            
+            emit Harvested(poolId, user, reward);
+        }
     }
 
-    function _calculateRewardDebt(
-        bytes32 poolId,
-        uint256 amount
+    function _calculateBlockReward(
+        bytes32 poolId
     ) internal view returns (uint256) {
         YieldPool storage pool = yieldPools[poolId];
-        return (amount * pool.rewardRate) / pool.totalStaked;
+        return pool.rewardRate * (block.timestamp - pool.lastUpdateTime);
     }
 
     // View functions
@@ -202,10 +203,10 @@ contract IkigaiYieldExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         return userPositions[poolId][user];
     }
 
-    function getPoolStats(
+    function getPoolConfig(
         bytes32 poolId
-    ) external view returns (PoolStats memory) {
-        return poolStats[poolId];
+    ) external view returns (PoolConfig memory) {
+        return poolConfigs[poolId];
     }
 
     function isTokenSupported(

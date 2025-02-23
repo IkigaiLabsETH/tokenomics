@@ -5,218 +5,208 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "../interfaces/IIkigaiVaultV2.sol";
 import "../interfaces/IIkigaiOracleV2.sol";
+import "../interfaces/IIkigaiVaultV2.sol";
 
 contract IkigaiLendingExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant LENDING_MANAGER = keccak256("LENDING_MANAGER");
     bytes32 public constant LIQUIDATOR_ROLE = keccak256("LIQUIDATOR_ROLE");
 
     struct LendingPool {
-        uint256 totalSupplied;     // Total tokens supplied
-        uint256 totalBorrowed;     // Total tokens borrowed
-        uint256 utilizationRate;   // Current utilization
-        uint256 interestRate;      // Current interest rate
-        bool isActive;             // Pool active status
+        address asset;           // Lending asset
+        uint256 totalSupply;    // Total supplied
+        uint256 totalBorrowed;  // Total borrowed
+        uint256 utilizationRate; // Current utilization
+        uint256 interestRate;   // Current interest rate
+        bool isActive;          // Pool status
     }
 
-    struct UserPosition {
-        uint256 supplied;          // Amount supplied
-        uint256 borrowed;          // Amount borrowed
-        uint256 collateral;        // Collateral amount
-        uint256 lastUpdate;        // Last update time
-        bool isLiquidatable;       // Liquidation status
+    struct UserLending {
+        uint256 supplied;       // Amount supplied
+        uint256 borrowed;       // Amount borrowed
+        uint256 collateral;     // Collateral value
+        uint256 lastUpdate;     // Last update time
+        bool isLiquidatable;    // Liquidation status
     }
 
-    struct RiskParams {
-        uint256 maxLTV;           // Maximum loan-to-value
+    struct LendingConfig {
+        uint256 maxLTV;         // Maximum loan-to-value
         uint256 liquidationThreshold; // Liquidation threshold
-        uint256 liquidationPenalty;   // Liquidation penalty
-        uint256 borrowLimit;       // Maximum borrow amount
-        uint256 minCollateral;     // Minimum collateral
+        uint256 borrowCap;      // Maximum borrow amount
+        uint256 reserveFactor;  // Reserve factor
+        bool requiresCollateral; // Collateral requirement
     }
 
     // State variables
-    IIkigaiVaultV2 public vault;
     IIkigaiOracleV2 public oracle;
+    IIkigaiVaultV2 public vault;
     
     mapping(bytes32 => LendingPool) public lendingPools;
-    mapping(bytes32 => mapping(address => UserPosition)) public userPositions;
-    mapping(bytes32 => RiskParams) public riskParams;
-    mapping(address => bool) public whitelistedAssets;
+    mapping(bytes32 => mapping(address => UserLending)) public userLendings;
+    mapping(bytes32 => LendingConfig) public lendingConfigs;
+    mapping(address => bool) public supportedAssets;
     
-    uint256 public constant BASIS_POINTS = 10000;
-    uint256 public constant MIN_COLLATERAL_RATIO = 12000; // 120%
-    uint256 public constant LIQUIDATION_BONUS = 500; // 5%
+    uint256 public constant MAX_LTV = 8000; // 80%
+    uint256 public constant MIN_COLLATERAL = 1000e18;
+    uint256 public constant INTEREST_RATE_BASE = 1000; // 10%
     
     // Events
-    event PoolCreated(bytes32 indexed poolId, uint256 interestRate);
+    event PoolCreated(bytes32 indexed poolId, address asset);
     event Supplied(bytes32 indexed poolId, address indexed user, uint256 amount);
     event Borrowed(bytes32 indexed poolId, address indexed user, uint256 amount);
     event Liquidated(bytes32 indexed poolId, address indexed user, uint256 amount);
 
     constructor(
-        address _vault,
-        address _oracle
+        address _oracle,
+        address _vault
     ) {
-        vault = IIkigaiVaultV2(_vault);
         oracle = IIkigaiOracleV2(_oracle);
+        vault = IIkigaiVaultV2(_vault);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     // Pool management
-    function createPool(
+    function createLendingPool(
         bytes32 poolId,
-        uint256 interestRate,
-        RiskParams calldata _riskParams
+        address asset,
+        LendingConfig calldata config
     ) external onlyRole(LENDING_MANAGER) {
         require(!lendingPools[poolId].isActive, "Pool exists");
-        require(interestRate > 0, "Invalid rate");
+        require(supportedAssets[asset], "Asset not supported");
+        require(config.maxLTV <= MAX_LTV, "LTV too high");
         
         lendingPools[poolId] = LendingPool({
-            totalSupplied: 0,
+            asset: asset,
+            totalSupply: 0,
             totalBorrowed: 0,
             utilizationRate: 0,
-            interestRate: interestRate,
+            interestRate: INTEREST_RATE_BASE,
             isActive: true
         });
         
-        riskParams[poolId] = _riskParams;
+        lendingConfigs[poolId] = config;
         
-        emit PoolCreated(poolId, interestRate);
+        emit PoolCreated(poolId, asset);
     }
 
-    // Supply operations
+    // Supply functions
     function supply(
         bytes32 poolId,
         uint256 amount
     ) external nonReentrant whenNotPaused {
-        require(amount > 0, "Invalid amount");
-        
         LendingPool storage pool = lendingPools[poolId];
-        UserPosition storage position = userPositions[poolId][msg.sender];
-        
         require(pool.isActive, "Pool not active");
         
+        // Update interest
+        _updateInterest(poolId);
+        
         // Transfer tokens
-        IERC20(vault.token()).transferFrom(msg.sender, address(this), amount);
+        IERC20(pool.asset).transferFrom(msg.sender, address(this), amount);
         
-        // Update position
-        position.supplied += amount;
-        position.lastUpdate = block.timestamp;
+        // Update state
+        UserLending storage lending = userLendings[poolId][msg.sender];
+        lending.supplied += amount;
+        lending.lastUpdate = block.timestamp;
         
-        // Update pool
-        pool.totalSupplied += amount;
-        pool.utilizationRate = _calculateUtilization(poolId);
+        pool.totalSupply += amount;
+        
+        // Update rates
+        _updatePoolRates(poolId);
         
         emit Supplied(poolId, msg.sender, amount);
     }
 
-    // Borrow operations
+    // Borrow functions
     function borrow(
         bytes32 poolId,
         uint256 amount
-    ) external nonReentrant whenNotPaused {
-        require(amount > 0, "Invalid amount");
-        
+    ) external nonReentrant {
         LendingPool storage pool = lendingPools[poolId];
-        UserPosition storage position = userPositions[poolId][msg.sender];
-        RiskParams storage params = riskParams[poolId];
-        
+        LendingConfig storage config = lendingConfigs[poolId];
         require(pool.isActive, "Pool not active");
-        require(amount <= _calculateBorrowLimit(poolId, msg.sender), "Exceeds limit");
         
-        // Update position
-        position.borrowed += amount;
-        position.lastUpdate = block.timestamp;
-        
-        // Check health
+        UserLending storage lending = userLendings[poolId][msg.sender];
         require(
-            _checkPositionHealth(poolId, msg.sender),
-            "Unhealthy position"
+            lending.collateral >= _calculateRequiredCollateral(poolId, amount),
+            "Insufficient collateral"
         );
         
-        // Update pool
-        pool.totalBorrowed += amount;
-        pool.utilizationRate = _calculateUtilization(poolId);
+        // Check borrow cap
+        require(
+            pool.totalBorrowed + amount <= config.borrowCap,
+            "Exceeds borrow cap"
+        );
+        
+        // Update interest
+        _updateInterest(poolId);
         
         // Transfer tokens
-        IERC20(vault.token()).transfer(msg.sender, amount);
+        IERC20(pool.asset).transfer(msg.sender, amount);
+        
+        // Update state
+        lending.borrowed += amount;
+        lending.lastUpdate = block.timestamp;
+        
+        pool.totalBorrowed += amount;
+        
+        // Update rates
+        _updatePoolRates(poolId);
         
         emit Borrowed(poolId, msg.sender, amount);
     }
 
-    // Liquidation
+    // Liquidation functions
     function liquidate(
         bytes32 poolId,
         address user
     ) external onlyRole(LIQUIDATOR_ROLE) nonReentrant {
-        UserPosition storage position = userPositions[poolId][user];
-        require(position.isLiquidatable, "Not liquidatable");
+        UserLending storage lending = userLendings[poolId][msg.sender];
+        require(lending.isLiquidatable, "Not liquidatable");
         
-        uint256 collateralValue = _getCollateralValue(poolId, user);
-        uint256 debtValue = _getDebtValue(poolId, user);
-        
-        require(collateralValue < debtValue, "Position healthy");
+        LendingPool storage pool = lendingPools[poolId];
+        LendingConfig storage config = lendingConfigs[poolId];
         
         // Calculate liquidation amount
-        uint256 liquidationAmount = _calculateLiquidationAmount(
-            poolId,
-            collateralValue,
-            debtValue
-        );
+        uint256 liquidationAmount = _calculateLiquidationAmount(poolId, user);
         
-        // Execute liquidation
+        // Handle liquidation
         _executeLiquidation(poolId, user, liquidationAmount);
         
         emit Liquidated(poolId, user, liquidationAmount);
     }
 
     // Internal functions
-    function _calculateUtilization(
+    function _updateInterest(
         bytes32 poolId
-    ) internal view returns (uint256) {
+    ) internal {
         LendingPool storage pool = lendingPools[poolId];
-        if (pool.totalSupplied == 0) return 0;
-        return (pool.totalBorrowed * BASIS_POINTS) / pool.totalSupplied;
+        
+        uint256 interest = _calculateInterest(poolId);
+        pool.totalBorrowed += interest;
     }
 
-    function _calculateBorrowLimit(
+    function _updatePoolRates(
+        bytes32 poolId
+    ) internal {
+        LendingPool storage pool = lendingPools[poolId];
+        
+        if (pool.totalSupply > 0) {
+            pool.utilizationRate = (pool.totalBorrowed * 10000) / pool.totalSupply;
+            pool.interestRate = _calculateInterestRate(pool.utilizationRate);
+        }
+    }
+
+    function _calculateRequiredCollateral(
         bytes32 poolId,
-        address user
+        uint256 amount
     ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
-    }
-
-    function _checkPositionHealth(
-        bytes32 poolId,
-        address user
-    ) internal view returns (bool) {
-        // Implementation needed
-        return false;
-    }
-
-    function _getCollateralValue(
-        bytes32 poolId,
-        address user
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
-    }
-
-    function _getDebtValue(
-        bytes32 poolId,
-        address user
-    ) internal view returns (uint256) {
-        // Implementation needed
-        return 0;
+        LendingConfig storage config = lendingConfigs[poolId];
+        return (amount * 10000) / config.maxLTV;
     }
 
     function _calculateLiquidationAmount(
         bytes32 poolId,
-        uint256 collateralValue,
-        uint256 debtValue
+        address user
     ) internal view returns (uint256) {
         // Implementation needed
         return 0;
@@ -230,6 +220,20 @@ contract IkigaiLendingExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         // Implementation needed
     }
 
+    function _calculateInterest(
+        bytes32 poolId
+    ) internal view returns (uint256) {
+        // Implementation needed
+        return 0;
+    }
+
+    function _calculateInterestRate(
+        uint256 utilization
+    ) internal pure returns (uint256) {
+        // Base rate + utilization factor
+        return INTEREST_RATE_BASE + (utilization / 100);
+    }
+
     // View functions
     function getLendingPool(
         bytes32 poolId
@@ -237,22 +241,22 @@ contract IkigaiLendingExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
         return lendingPools[poolId];
     }
 
-    function getUserPosition(
+    function getUserLending(
         bytes32 poolId,
         address user
-    ) external view returns (UserPosition memory) {
-        return userPositions[poolId][user];
+    ) external view returns (UserLending memory) {
+        return userLendings[poolId][user];
     }
 
-    function getRiskParams(
+    function getLendingConfig(
         bytes32 poolId
-    ) external view returns (RiskParams memory) {
-        return riskParams[poolId];
+    ) external view returns (LendingConfig memory) {
+        return lendingConfigs[poolId];
     }
 
-    function isAssetWhitelisted(
+    function isAssetSupported(
         address asset
     ) external view returns (bool) {
-        return whitelistedAssets[asset];
+        return supportedAssets[asset];
     }
 } 

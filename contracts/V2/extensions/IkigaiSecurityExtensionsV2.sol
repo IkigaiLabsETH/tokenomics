@@ -5,213 +5,200 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "../interfaces/IIkigaiVaultV2.sol";
-import "../interfaces/IIkigaiMonitoringExtensionsV2.sol";
+import "../interfaces/IIkigaiOracleV2.sol";
 
 contract IkigaiSecurityExtensionsV2 is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant SECURITY_MANAGER = keccak256("SECURITY_MANAGER");
     bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
 
     struct SecurityConfig {
-        uint256 maxGasPrice;       // Maximum gas price
-        uint256 maxTxValue;        // Maximum transaction value
-        uint256 cooldownPeriod;    // Action cooldown period
-        uint256 timelock;          // Timelock duration
-        bool requiresApproval;     // Whether approval required
+        uint256 maxGasPrice;     // Maximum gas price
+        uint256 maxTxValue;      // Maximum transaction value
+        uint256 cooldownPeriod;  // Action cooldown
+        uint256 rateLimit;       // Rate limiting
+        bool requiresGuardian;   // Guardian requirement
     }
 
-    struct RiskLimit {
-        uint256 dailyLimit;        // Daily transaction limit
-        uint256 txLimit;           // Per-transaction limit
-        uint256 userLimit;         // Per-user limit
-        uint256 contractLimit;     // Per-contract limit
-        bool isActive;             // Limit active status
+    struct GuardianAction {
+        bytes32 actionType;      // Action type
+        address target;          // Target address
+        uint256 value;          // Action value
+        uint256 timestamp;      // Action time
+        bool approved;          // Approval status
     }
 
-    struct SecurityStats {
-        uint256 blockedTx;         // Number of blocked transactions
-        uint256 riskLevel;         // Current risk level
-        uint256 lastIncident;      // Last incident timestamp
-        uint256 totalIncidents;    // Total security incidents
-        bool emergencyMode;        // Emergency mode status
+    struct RiskParams {
+        uint256 maxExposure;     // Maximum exposure
+        uint256 minCollateral;   // Minimum collateral
+        uint256 liquidationThreshold; // Liquidation threshold
+        uint256 penaltyRate;    // Penalty rate
+        bool active;            // Risk status
     }
 
     // State variables
     IIkigaiVaultV2 public vault;
-    IIkigaiMonitoringExtensionsV2 public monitoring;
+    IIkigaiOracleV2 public oracle;
     
-    mapping(address => SecurityConfig) public securityConfigs;
-    mapping(address => RiskLimit) public riskLimits;
-    mapping(address => SecurityStats) public securityStats;
+    mapping(bytes32 => SecurityConfig) public securityConfigs;
+    mapping(bytes32 => GuardianAction[]) public guardianActions;
+    mapping(address => RiskParams) public riskParams;
     mapping(address => bool) public blacklistedAddresses;
     
-    uint256 public constant MAX_RISK_LEVEL = 100;
-    uint256 public constant MIN_TIMELOCK = 1 hours;
-    uint256 public constant EMERGENCY_TIMEOUT = 24 hours;
+    uint256 public constant MAX_GAS_PRICE = 1000 gwei;
+    uint256 public constant MIN_COOLDOWN = 1 hours;
+    uint256 public constant MAX_RATE_LIMIT = 1000;
     
     // Events
-    event SecurityConfigured(address indexed target, uint256 timelock);
-    event RiskLimitUpdated(address indexed target, uint256 limit);
-    event SecurityIncident(address indexed target, string details);
-    event EmergencyAction(address indexed target, string action);
+    event SecurityConfigUpdated(bytes32 indexed configId);
+    event GuardianActionExecuted(bytes32 indexed actionId);
+    event RiskParamsUpdated(address indexed target);
+    event AddressBlacklisted(address indexed target, bool status);
 
     constructor(
         address _vault,
-        address _monitoring
+        address _oracle
     ) {
         vault = IIkigaiVaultV2(_vault);
-        monitoring = IIkigaiMonitoringExtensionsV2(_monitoring);
+        oracle = IIkigaiOracleV2(_oracle);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     // Security configuration
-    function configureSecurity(
-        address target,
-        SecurityConfig calldata config,
-        RiskLimit calldata limits
+    function updateSecurityConfig(
+        bytes32 configId,
+        SecurityConfig calldata config
     ) external onlyRole(SECURITY_MANAGER) {
-        require(config.timelock >= MIN_TIMELOCK, "Timelock too short");
-        require(limits.dailyLimit >= limits.txLimit, "Invalid limits");
+        require(config.maxGasPrice <= MAX_GAS_PRICE, "Gas price too high");
+        require(config.cooldownPeriod >= MIN_COOLDOWN, "Cooldown too short");
+        require(config.rateLimit <= MAX_RATE_LIMIT, "Rate limit too high");
         
-        securityConfigs[target] = config;
-        riskLimits[target] = limits;
+        securityConfigs[configId] = config;
         
-        emit SecurityConfigured(target, config.timelock);
-        emit RiskLimitUpdated(target, limits.dailyLimit);
+        emit SecurityConfigUpdated(configId);
     }
 
-    // Transaction validation
-    function validateTransaction(
+    // Guardian actions
+    function executeGuardianAction(
+        bytes32 actionId,
+        bytes32 actionType,
         address target,
-        uint256 value,
-        bytes calldata data
-    ) external view returns (bool isValid, string memory reason) {
-        SecurityConfig storage config = securityConfigs[target];
-        RiskLimit storage limits = riskLimits[target];
+        uint256 value
+    ) external onlyRole(GUARDIAN_ROLE) nonReentrant {
+        require(!blacklistedAddresses[target], "Target blacklisted");
         
-        // Check blacklist
-        if (blacklistedAddresses[target]) {
-            return (false, "Address blacklisted");
-        }
+        SecurityConfig storage config = securityConfigs[actionType];
+        require(config.requiresGuardian, "Guardian not required");
         
-        // Check gas price
-        if (tx.gasprice > config.maxGasPrice) {
-            return (false, "Gas price too high");
-        }
-        
-        // Check value limits
-        if (value > limits.txLimit) {
-            return (false, "Value exceeds limit");
-        }
-        
-        // Check risk level
-        if (_calculateRiskLevel(target, value, data) > MAX_RISK_LEVEL) {
-            return (false, "Risk too high");
-        }
-        
-        return (true, "");
-    }
-
-    // Emergency controls
-    function triggerEmergency(
-        address target,
-        string calldata reason
-    ) external onlyRole(GUARDIAN_ROLE) {
-        SecurityStats storage stats = securityStats[target];
-        require(!stats.emergencyMode, "Already in emergency");
-        
-        // Activate emergency mode
-        stats.emergencyMode = true;
-        stats.lastIncident = block.timestamp;
-        stats.totalIncidents++;
-        
-        // Notify monitoring
-        monitoring.handleAlert(
-            keccak256("SECURITY_EMERGENCY"),
-            reason
+        // Validate action
+        require(
+            _validateGuardianAction(actionType, target, value),
+            "Invalid action"
         );
         
-        emit EmergencyAction(target, "EMERGENCY_ACTIVATED");
+        // Record action
+        guardianActions[actionId].push(GuardianAction({
+            actionType: actionType,
+            target: target,
+            value: value,
+            timestamp: block.timestamp,
+            approved: true
+        }));
+        
+        // Execute action
+        _executeAction(actionType, target, value);
+        
+        emit GuardianActionExecuted(actionId);
     }
 
     // Risk management
-    function updateRiskLimits(
+    function updateRiskParams(
         address target,
-        RiskLimit calldata newLimits
+        RiskParams calldata params
     ) external onlyRole(SECURITY_MANAGER) {
-        require(newLimits.dailyLimit > 0, "Invalid daily limit");
-        require(newLimits.txLimit <= newLimits.dailyLimit, "Invalid tx limit");
+        require(params.maxExposure > 0, "Invalid exposure");
+        require(params.minCollateral > 0, "Invalid collateral");
+        require(params.liquidationThreshold > 0, "Invalid threshold");
         
-        riskLimits[target] = newLimits;
+        riskParams[target] = params;
         
-        emit RiskLimitUpdated(target, newLimits.dailyLimit);
+        emit RiskParamsUpdated(target);
     }
 
     // Blacklist management
     function updateBlacklist(
         address target,
-        bool blacklisted
+        bool status
     ) external onlyRole(SECURITY_MANAGER) {
-        blacklistedAddresses[target] = blacklisted;
+        blacklistedAddresses[target] = status;
         
-        if (blacklisted) {
-            SecurityStats storage stats = securityStats[target];
-            stats.blockedTx++;
-            stats.riskLevel = MAX_RISK_LEVEL;
-        }
-        
-        emit SecurityIncident(target, blacklisted ? "BLACKLISTED" : "UNBLACKLISTED");
+        emit AddressBlacklisted(target, status);
     }
 
     // Internal functions
-    function _calculateRiskLevel(
-        address target,
-        uint256 value,
-        bytes calldata data
-    ) internal view returns (uint256) {
-        // Implementation needed - calculate risk based on various factors
-        return 0;
-    }
-
-    function _validateTimelock(
-        address target,
-        bytes32 actionHash
-    ) internal view returns (bool) {
-        // Implementation needed
-        return false;
-    }
-
-    function _checkLimits(
+    function _validateGuardianAction(
+        bytes32 actionType,
         address target,
         uint256 value
     ) internal view returns (bool) {
-        // Implementation needed
-        return false;
+        SecurityConfig storage config = securityConfigs[actionType];
+        
+        // Check value limit
+        if (value > config.maxTxValue) {
+            return false;
+        }
+        
+        // Check rate limit
+        if (!_checkRateLimit(actionType)) {
+            return false;
+        }
+        
+        // Check cooldown
+        if (!_checkCooldown(actionType)) {
+            return false;
+        }
+        
+        return true;
     }
 
-    function _updateSecurityStats(
+    function _executeAction(
+        bytes32 actionType,
         address target,
-        bool isIncident
+        uint256 value
     ) internal {
         // Implementation needed
     }
 
+    function _checkRateLimit(
+        bytes32 actionType
+    ) internal view returns (bool) {
+        // Implementation needed
+        return true;
+    }
+
+    function _checkCooldown(
+        bytes32 actionType
+    ) internal view returns (bool) {
+        // Implementation needed
+        return true;
+    }
+
     // View functions
     function getSecurityConfig(
-        address target
+        bytes32 configId
     ) external view returns (SecurityConfig memory) {
-        return securityConfigs[target];
+        return securityConfigs[configId];
     }
 
-    function getRiskLimit(
-        address target
-    ) external view returns (RiskLimit memory) {
-        return riskLimits[target];
+    function getGuardianActions(
+        bytes32 actionId
+    ) external view returns (GuardianAction[] memory) {
+        return guardianActions[actionId];
     }
 
-    function getSecurityStats(
+    function getRiskParams(
         address target
-    ) external view returns (SecurityStats memory) {
-        return securityStats[target];
+    ) external view returns (RiskParams memory) {
+        return riskParams[target];
     }
 
     function isBlacklisted(
