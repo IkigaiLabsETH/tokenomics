@@ -62,9 +62,16 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         uint256 tokenAmount;
         bool achieved;
         uint256 unlockTime;
+        uint256 releasedAmount;
     }
     
     Milestone[] public milestones;
+    mapping(uint256 => uint256) public milestoneUnlockTime;
+
+    // Add loyalty-based fee discounts
+    mapping(address => uint256) public userFirstActivityTime;
+    uint256 public constant LOYALTY_DISCOUNT_PER_YEAR = 500; // 5% per year
+    uint256 public constant MAX_LOYALTY_DISCOUNT = 2000; // 20% max
 
     // Events
     event RevenueDistributed(
@@ -90,7 +97,7 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
     event FeeCollected(address indexed from, uint256 amount, uint256 fee);
     event FeeParametersUpdated(uint256 baseFee, uint256 minFee, uint256 maxFee);
     event MilestoneAdded(uint256 indexed index, string description, uint256 tokenAmount);
-    event MilestoneAchieved(uint256 indexed index, uint256 unlockTime);
+    event MilestoneAchieved(uint256 indexed index, string description, uint256 delay);
     event MilestoneTokensClaimed(uint256 indexed index, address recipient, uint256 amount);
     event FundsWithdrawn(address indexed token, address indexed recipient, uint256 amount);
 
@@ -328,7 +335,7 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         require(hasRole(OPERATOR_ROLE, msg.sender), "Not operator");
         require(_amount > 0, "Zero amount");
         
-        uint256 feeRate = calculateDynamicFee(_amount);
+        uint256 feeRate = calculateDynamicFee(_amount, _from);
         uint256 feeAmount = (_amount * feeRate) / 10000;
         
         // Transfer fee
@@ -344,19 +351,37 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
      * @param _transactionValue Value of the transaction
      * @return Fee rate in basis points
      */
-    function calculateDynamicFee(uint256 _transactionValue) public view returns (uint256) {
+    function calculateDynamicFee(uint256 _transactionValue, address _user) public view returns (uint256) {
         // Base fee for standard transactions
         uint256 fee = baseFee;
+        uint256 totalDiscount = 0;
         
-        // Reduce fee for large transactions
+        // Volume discount
         if (_transactionValue > 10000e18) { // > 10,000 tokens
-            fee = fee * 90 / 100; // 10% discount
+            totalDiscount += 1000; // 10% discount
         }
         
-        // Further reduce for very large transactions
         if (_transactionValue > 100000e18) { // > 100,000 tokens
-            fee = fee * 80 / 100; // Additional 20% discount
+            totalDiscount += 1000; // Additional 10% discount
         }
+        
+        // Cap whale discount at 25%
+        if (totalDiscount > 2500) totalDiscount = 2500;
+        
+        // Loyalty discount
+        if (userFirstActivityTime[_user] > 0) {
+            uint256 yearsActive = (block.timestamp - userFirstActivityTime[_user]) / 365 days;
+            uint256 loyaltyDiscount = yearsActive * LOYALTY_DISCOUNT_PER_YEAR;
+            
+            if (loyaltyDiscount > MAX_LOYALTY_DISCOUNT) {
+                loyaltyDiscount = MAX_LOYALTY_DISCOUNT;
+            }
+            
+            totalDiscount += loyaltyDiscount;
+        }
+        
+        // Apply total discount
+        fee = fee * (10000 - totalDiscount) / 10000;
         
         // Ensure fee is within bounds
         if (fee < minFee) return minFee;
@@ -401,7 +426,8 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
             description: _description,
             tokenAmount: _tokenAmount,
             achieved: false,
-            unlockTime: 0
+            unlockTime: 0,
+            releasedAmount: 0
         }));
         
         emit MilestoneAdded(milestones.length - 1, _description, _tokenAmount);
@@ -417,9 +443,23 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         require(!milestones[_index].achieved, "Already achieved");
         
         milestones[_index].achieved = true;
-        milestones[_index].unlockTime = block.timestamp + 30 days; // 30-day delay
         
-        emit MilestoneAchieved(_index, milestones[_index].unlockTime);
+        // Calculate delay based on token amount
+        uint256 amount = milestones[_index].tokenAmount;
+        uint256 delay;
+        
+        if (amount < 1000000 * 1e18) { // < 1M tokens
+            delay = 30 days;
+        } else if (amount < 5000000 * 1e18) { // 1-5M tokens
+            delay = 60 days;
+        } else { // > 5M tokens
+            delay = 90 days;
+        }
+        
+        // Set unlock time
+        milestoneUnlockTime[_index] = block.timestamp + delay;
+        
+        emit MilestoneAchieved(_index, milestones[_index].description, delay);
     }
     
     /**
@@ -427,18 +467,27 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
      * @param _index Milestone index
      * @param _recipient Recipient of the tokens
      */
-    function claimMilestoneTokens(uint256 _index, address _recipient) external nonReentrant {
+    function claimMilestoneTokens(uint256 _index, address _recipient) external {
         require(hasRole(GOVERNANCE_ROLE, msg.sender), "Not governance");
         require(_index < milestones.length, "Invalid milestone");
         require(milestones[_index].achieved, "Not achieved");
-        require(block.timestamp >= milestones[_index].unlockTime, "Not unlocked yet");
+        require(block.timestamp >= milestoneUnlockTime[_index], "Not unlocked");
         require(_recipient != address(0), "Invalid recipient");
         
-        uint256 amount = milestones[_index].tokenAmount;
-        require(ikigaiToken.balanceOf(address(this)) >= amount, "Insufficient balance");
+        Milestone storage milestone = milestones[_index];
         
-        // Reset milestone amount to prevent double-claiming
-        milestones[_index].tokenAmount = 0;
+        // Calculate release schedule (25% per month over 4 months)
+        uint256 monthsSinceUnlock = (block.timestamp - milestoneUnlockTime[_index]) / 30 days;
+        uint256 maxReleasePercentage = (monthsSinceUnlock + 1) * 25;
+        if (maxReleasePercentage > 100) maxReleasePercentage = 100;
+        
+        uint256 maxReleasable = (milestone.tokenAmount * maxReleasePercentage) / 100;
+        uint256 alreadyReleased = milestone.releasedAmount;
+        
+        require(maxReleasable > alreadyReleased, "No tokens to release");
+        
+        uint256 amount = maxReleasable - alreadyReleased;
+        milestone.releasedAmount = maxReleasable;
         
         // Transfer tokens
         ikigaiToken.safeTransfer(_recipient, amount);
@@ -480,5 +529,14 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
      */
     function getMilestoneCount() external view returns (uint256) {
         return milestones.length;
+    }
+
+    // Record first activity
+    function recordUserActivity(address _user) external {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Not operator");
+        
+        if (userFirstActivityTime[_user] == 0) {
+            userFirstActivityTime[_user] = block.timestamp;
+        }
     }
 } 

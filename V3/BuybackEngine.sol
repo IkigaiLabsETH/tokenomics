@@ -605,72 +605,74 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
         // Function logic...
     }
 
-    /**
-     * @notice Calculates optimal buyback amount based on market conditions
-     * @return Optimal buyback amount
-     */
-    function calculateOptimalBuybackAmount() public view returns (uint256) {
-        // Get current price and 30-day average
-        uint256 currentPrice = getCurrentPrice();
-        uint256 thirtyDayAvg = getThirtyDayAveragePrice();
+    // Add to BuybackEngine.sol
+    uint256[] public longTermPriceHistory; // 90-day price history
+    uint256 public constant LONG_TERM_PRICE_INTERVAL = 1 days;
+    uint256 public lastLongTermPriceUpdate;
+
+    function updateLongTermPrice() external {
+        require(block.timestamp >= lastLongTermPriceUpdate + LONG_TERM_PRICE_INTERVAL, "Too soon");
         
-        // Calculate price deviation
-        uint256 deviation = 0;
-        if (currentPrice < thirtyDayAvg) {
-            deviation = ((thirtyDayAvg - currentPrice) * 10000) / thirtyDayAvg;
+        // Get current price
+        (uint256 price, ) = getLatestPrice();
+        
+        // Add to history
+        longTermPriceHistory.push(price);
+        
+        // Keep only last 90 days
+        if (longTermPriceHistory.length > 90) {
+            // Remove oldest price
+            for (uint i = 0; i < longTermPriceHistory.length - 90; i++) {
+                longTermPriceHistory[i] = longTermPriceHistory[i + 1];
+            }
+            longTermPriceHistory.pop();
         }
         
-        // Calculate buyback multiplier based on deviation
-        // Higher deviation = higher multiplier (more aggressive buyback)
-        uint256 multiplier = 10000 + (deviation * 3); // +0-30% based on deviation
-        
-        // Apply to base buyback amount
-        return (MIN_BUYBACK_AMOUNT * multiplier) / 10000;
+        lastLongTermPriceUpdate = block.timestamp;
     }
 
-    /**
-     * @notice Gets 30-day average price
-     * @return 30-day average price
-     */
-    function getThirtyDayAveragePrice() public view returns (uint256) {
-        if (priceHistory.length == 0) return 0;
+    function getLongTermAveragePrice() public view returns (uint256) {
+        if (longTermPriceHistory.length == 0) return 0;
         
         uint256 total = 0;
-        uint256 count = 0;
-        
-        // Use up to 30 most recent prices
-        uint256 startIndex = priceHistory.length > 30 ? priceHistory.length - 30 : 0;
-        
-        for (uint256 i = startIndex; i < priceHistory.length; i++) {
-            total += priceHistory[i];
-            count++;
+        for (uint256 i = 0; i < longTermPriceHistory.length; i++) {
+            total += longTermPriceHistory[i];
         }
         
-        return total / count;
+        return total / longTermPriceHistory.length;
     }
 
-    /**
-     * @notice Executes algorithmic buyback
-     */
-    function executeAlgorithmicBuyback() external nonReentrant {
-        require(hasRole(OPERATOR_ROLE, msg.sender), "Not operator");
-        require(block.timestamp >= lastBuybackTime + BUYBACK_COOLDOWN, "Cooldown active");
+    // Enhanced buyback calculation using multi-timeframe analysis
+    function calculateOptimalBuybackAmount() public view returns (uint256) {
+        uint256 currentPrice = getCurrentPrice();
+        uint256 thirtyDayAvg = getThirtyDayAveragePrice();
+        uint256 ninetyDayAvg = getLongTermAveragePrice();
         
-        // Calculate optimal buyback amount
-        uint256 buybackAmount = calculateOptimalBuybackAmount();
-        
-        // Ensure minimum amount
-        if (buybackAmount < MIN_BUYBACK_AMOUNT) {
-            buybackAmount = MIN_BUYBACK_AMOUNT;
+        // Calculate short-term deviation
+        uint256 shortTermDeviation = 0;
+        if (currentPrice < thirtyDayAvg) {
+            shortTermDeviation = ((thirtyDayAvg - currentPrice) * 10000) / thirtyDayAvg;
         }
         
-        // Check if we have enough stablecoin
-        uint256 stablecoinBalance = stablecoin.balanceOf(address(this));
-        if (stablecoinBalance < buybackAmount) {
-            buybackAmount = stablecoinBalance;
+        // Calculate long-term trend
+        bool isLongTermUptrend = ninetyDayAvg < thirtyDayAvg;
+        
+        // Adjust multiplier based on both timeframes
+        uint256 multiplier = 10000; // Base 100%
+        
+        if (isLongTermUptrend) {
+            // In uptrend, be more conservative with buybacks
+            multiplier += (shortTermDeviation * 2); // +0-20% based on deviation
+        } else {
+            // In downtrend, be more aggressive with buybacks
+            multiplier += (shortTermDeviation * 4); // +0-40% based on deviation
         }
         
-        // Execute buyback
-        _executeBuyback(buybackAmount);
+        // Pause buybacks during extreme uptrends
+        if (currentPrice > ninetyDayAvg * 120 / 100) {
+            return 0; // No buybacks when price > 120% of 90-day avg
+        }
+        
+        return (MIN_BUYBACK_AMOUNT * multiplier) / 10000;
     }
 } 

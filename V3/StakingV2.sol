@@ -27,11 +27,13 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
     uint256 public constant TIER1_THRESHOLD = 1_000 * 10**18; // 1,000 IKIGAI
     uint256 public constant TIER2_THRESHOLD = 5_000 * 10**18; // 5,000 IKIGAI
     uint256 public constant TIER3_THRESHOLD = 15_000 * 10**18; // 15,000 IKIGAI
+    uint256 public constant TIER0_THRESHOLD = 1000 * 1e18;   // 1,000 IKIGAI
 
     // Tier discounts (in basis points, 100 = 1%)
     uint256 public constant TIER1_DISCOUNT = 500;  // 5%
     uint256 public constant TIER2_DISCOUNT = 1500; // 15%
     uint256 public constant TIER3_DISCOUNT = 2500; // 25%
+    uint256 public constant TIER0_DISCOUNT = 200;   // 2%
 
     // Lock periods
     uint256 public constant MIN_LOCK_PERIOD = 7 days;
@@ -49,6 +51,11 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
 
     // Add whitelist for fee exemption
     mapping(address => bool) public feeExempt;
+
+    // Add loyalty bonus
+    mapping(address => uint256) public userFirstStakeTime;
+    uint256 public constant LOYALTY_APY_BONUS_PER_YEAR = 200; // 2% per year
+    uint256 public constant MAX_LOYALTY_APY_BONUS = 1000; // 10% max
 
     struct Stake {
         uint256 amount;
@@ -259,28 +266,24 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
         
         uint256 totalAmount = 0;
         uint256 weightedLockPeriod = 0;
+        uint256 historicalCommitment = 0;
         
-        // Verify ownership and calculate combined properties
         for (uint256 i = 0; i < _stakeIds.length; i++) {
-            uint256 stakeId = _stakeIds[i];
-            require(stakeOwner[stakeId] == msg.sender, "Not owner of all stakes");
+            Stake storage userStake = stakes[_stakeIds[i]];
             
-            Stake storage userStake = stakes[stakeId];
-            require(userStake.active, "Stake not active");
+            // Calculate time already staked
+            uint256 timeStaked = block.timestamp - userStake.startTime;
             
-            // Add rewards to pending rewards
-            uint256 rewards = calculateRewards(stakeId);
-            if (rewards > 0) {
-                pendingRewards[msg.sender] += rewards;
-            }
+            // Add historical commitment bonus (5% of time already staked)
+            historicalCommitment += (timeStaked * userStake.amount * 5) / 100;
             
             // Calculate weighted lock period
             weightedLockPeriod += userStake.amount * userStake.lockPeriod;
             totalAmount += userStake.amount;
         }
         
-        // Calculate final weighted lock period
-        weightedLockPeriod = weightedLockPeriod / totalAmount;
+        // Calculate final weighted lock period with historical bonus
+        weightedLockPeriod = (weightedLockPeriod + historicalCommitment) / totalAmount;
         
         // Create new combined stake
         uint256 newStakeId = _createStake(totalAmount, weightedLockPeriod);
@@ -347,7 +350,9 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
             if (userStake.active) {
                 // Calculate base APY based on tier
                 uint256 baseApy = BASE_RATE;
-                if (userStake.tier == 1) {
+                if (userStake.amount >= TIER0_THRESHOLD && userStake.amount < TIER1_THRESHOLD) {
+                    baseApy = BASE_RATE + TIER0_DISCOUNT;
+                } else if (userStake.tier == 1) {
                     baseApy = BASE_RATE + 500; // +5%
                 } else if (userStake.tier == 2) {
                     baseApy = BASE_RATE + 1000; // +10%
@@ -357,7 +362,18 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
                 
                 // Calculate lock duration bonus
                 uint256 weeklyBonus = (userStake.lockPeriod / 1 weeks) * WEEKLY_BONUS;
-                uint256 stakeApy = baseApy + weeklyBonus;
+                
+                // Calculate loyalty bonus
+                uint256 loyaltyBonus = 0;
+                if (userFirstStakeTime[_user] > 0) {
+                    uint256 yearsStaking = (block.timestamp - userFirstStakeTime[_user]) / 365 days;
+                    loyaltyBonus = yearsStaking * LOYALTY_APY_BONUS_PER_YEAR;
+                    if (loyaltyBonus > MAX_LOYALTY_APY_BONUS) {
+                        loyaltyBonus = MAX_LOYALTY_APY_BONUS;
+                    }
+                }
+                
+                uint256 stakeApy = baseApy + weeklyBonus + loyaltyBonus;
                 
                 // Add weighted APY
                 weightedApy += userStake.amount * stakeApy;

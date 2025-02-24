@@ -55,12 +55,21 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
     address[] public registeredCollections;
     mapping(address => bool) public isRegisteredCollection;
     uint256 public collectionBonusBps = 250; // 2.5% per collection
-    uint256 public maxCollectionBonus = 1000; // 10% max
+    uint256 public maxCollectionBonus = 1500; // Increased to 15% max
     
     // Referral system
-    mapping(address => address) public referrers;
-    mapping(address => uint256) public referralRewards;
-    uint256 public referralRewardBps = 500; // 5% of mint price
+    struct ReferralTier {
+        uint256 minReferrals;
+        uint256 rewardBps;
+    }
+
+    // Tiered referral rewards (5% for 1-5 referrals, 7% for 6-15, 10% for 16+)
+    ReferralTier[] public referralTiers;
+    mapping(address => uint256) public referralCount;
+    uint256 public maxReferralReward = 10000; // 100,000 IKIGAI cap per referrer
+    
+    // Enhance collection synergies with rarity-based bonuses
+    mapping(address => uint256) public collectionRarityMultiplier; // 100 = 1x
     
     // Events
     event BuybackContribution(uint256 amount);
@@ -117,6 +126,11 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
         discountTiers.push(DiscountTier(5000 * 1e18, 1000));  // 5,000 IKIGAI = 10% discount
         discountTiers.push(DiscountTier(10000 * 1e18, 2000)); // 10,000 IKIGAI = 20% discount
         discountTiers.push(DiscountTier(25000 * 1e18, 3000)); // 25,000 IKIGAI = 30% discount
+        
+        // Initialize referral tiers
+        referralTiers.push(ReferralTier({minReferrals: 0, rewardBps: 500}));  // 5% for 1-5
+        referralTiers.push(ReferralTier({minReferrals: 6, rewardBps: 700}));  // 7% for 6-15
+        referralTiers.push(ReferralTier({minReferrals: 16, rewardBps: 1000})); // 10% for 16+
     }
     
     /**
@@ -491,14 +505,26 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
      * @return Bonus in basis points
      */
     function getCollectionBonus(address _user) public view returns (uint256) {
-        uint256 collections = 0;
+        uint256 bonus = 0;
+        uint256 rareCollections = 0;
+        
         for (uint i = 0; i < registeredCollections.length; i++) {
-            if (IERC721(registeredCollections[i]).balanceOf(_user) > 0) {
-                collections++;
+            address collection = registeredCollections[i];
+            if (IERC721(collection).balanceOf(_user) > 0) {
+                // Apply rarity multiplier (default 100 = 1x)
+                uint256 multiplier = collectionRarityMultiplier[collection];
+                if (multiplier == 0) multiplier = 100;
+                
+                bonus += (collectionBonusBps * multiplier) / 100;
+                rareCollections++;
             }
         }
         
-        uint256 bonus = collections * collectionBonusBps;
+        // Add special bonus for holding 3+ collections
+        if (rareCollections >= 3) {
+            bonus += 250; // Extra 2.5% for 3+ collections
+        }
+        
         return bonus > maxCollectionBonus ? maxCollectionBonus : bonus;
     }
     
@@ -578,11 +604,11 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
         uint256 totalPrice = discountedPrice * _quantity;
         
         // Calculate referral reward
-        uint256 referralAmount = (totalPrice * referralRewardBps) / 10000;
-        referralRewards[_referrer] += referralAmount;
+        uint256 referralAmount = (totalPrice * getReferralRewardBps(msg.sender)) / 10000;
+        referralCount[_referrer]++;
         
         // Transfer payment from sender
-        ikigaiToken.safeTransferFrom(msg.sender, address(this), totalPrice);
+        ikigaiToken.safeTransferFrom(msg.sender, address(this), totalPrice - referralAmount);
         
         // Process payment distribution
         _processPayment(totalPrice - referralAmount);
@@ -597,10 +623,10 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
      * @notice Claims referral rewards
      */
     function claimReferralRewards() external nonReentrant {
-        uint256 rewards = referralRewards[msg.sender];
+        uint256 rewards = referralCount[msg.sender];
         require(rewards > 0, "No rewards to claim");
         
-        referralRewards[msg.sender] = 0;
+        referralCount[msg.sender] = 0;
         ikigaiToken.safeTransfer(msg.sender, rewards);
         
         emit ReferralRewardsClaimed(msg.sender, rewards);
@@ -614,7 +640,26 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
         require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Not admin");
         require(_rewardBps <= 1000, "Max 10%");
         
-        referralRewardBps = _rewardBps;
+        referralTiers.push(ReferralTier({minReferrals: 0, rewardBps: _rewardBps}));
         emit ReferralRewardUpdated(_rewardBps);
     }
+    
+    /**
+     * @notice Gets referral reward percentage for a referrer
+     * @param _referrer Address of the referrer
+     * @return Reward percentage in basis points
+     */
+    function getReferralRewardBps(address _referrer) public view returns (uint256) {
+        uint256 count = referralCount[_referrer];
+        
+        // Find appropriate tier
+        for (int i = int(referralTiers.length) - 1; i >= 0; i--) {
+            if (count >= referralTiers[uint(i)].minReferrals) {
+                return referralTiers[uint(i)].rewardBps;
+            }
+        }
+        
+        return referralTiers[0].rewardBps; // Default to first tier
+    }
+}
 }

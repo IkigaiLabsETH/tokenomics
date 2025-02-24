@@ -27,8 +27,10 @@ contract ProtocolNFTVault is AccessControl, ERC721Holder, ReentrancyGuard {
     mapping(address => bool) public registeredCollections;
     
     // Revenue sharing
-    uint256 public constant BUYBACK_SHARE_BPS = 2000; // 20% to buyback
-    uint256 public constant TREASURY_SHARE_BPS = 8000; // 80% to treasury
+    uint256 public buybackShareBps = 2000; // Default 20%
+    uint256 public treasuryShareBps = 8000; // Default 80%
+    uint256 public lastAllocationUpdate;
+    uint256 public constant ALLOCATION_COOLDOWN = 7 days;
     
     // External contracts
     IBuybackEngine public buybackEngine;
@@ -42,6 +44,7 @@ contract ProtocolNFTVault is AccessControl, ERC721Holder, ReentrancyGuard {
     event CollectionRegistered(address indexed collection);
     event BuybackEngineUpdated(address indexed newEngine);
     event TreasuryUpdated(address indexed newTreasury);
+    event BuybackAllocationUpdated(uint256 buybackShareBps, uint256 treasuryShareBps);
     
     constructor(
         address _buybackEngine,
@@ -126,7 +129,7 @@ contract ProtocolNFTVault is AccessControl, ERC721Holder, ReentrancyGuard {
      * @param _amount Amount to distribute
      */
     function _distributeRevenue(uint256 _amount) internal {
-        uint256 buybackAmount = (_amount * BUYBACK_SHARE_BPS) / 10000;
+        uint256 buybackAmount = (_amount * buybackShareBps) / 10000;
         uint256 treasuryAmount = _amount - buybackAmount;
         
         // Send to buyback engine
@@ -212,5 +215,38 @@ contract ProtocolNFTVault is AccessControl, ERC721Holder, ReentrancyGuard {
         IERC20 tokenToRecover = IERC20(_token);
         uint256 balance = tokenToRecover.balanceOf(address(this));
         tokenToRecover.safeTransfer(msg.sender, balance);
+    }
+    
+    /**
+     * @notice Updates the buyback allocation based on market conditions
+     */
+    function updateBuybackAllocation() external {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Not operator");
+        require(block.timestamp >= lastAllocationUpdate + ALLOCATION_COOLDOWN, "Cooldown active");
+        
+        // Get price data from buyback engine
+        uint256 currentPrice = buybackEngine.getCurrentPrice();
+        uint256 avg90DayPrice = buybackEngine.getLongTermAveragePrice();
+        
+        // Calculate price ratio (10000 = 100%)
+        uint256 priceRatio = (currentPrice * 10000) / avg90DayPrice;
+        
+        // Adjust buyback allocation based on price
+        if (priceRatio < 9000) { // Price < 90% of 90-day avg
+            // Increase buyback to 40%
+            buybackShareBps = 4000;
+            treasuryShareBps = 6000;
+        } else if (priceRatio > 11000) { // Price > 110% of 90-day avg
+            // Decrease buyback to 10%
+            buybackShareBps = 1000;
+            treasuryShareBps = 9000;
+        } else {
+            // Reset to default
+            buybackShareBps = 2000;
+            treasuryShareBps = 8000;
+        }
+        
+        lastAllocationUpdate = block.timestamp;
+        emit BuybackAllocationUpdated(buybackShareBps, treasuryShareBps);
     }
 } 
