@@ -7,13 +7,16 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import "./interfaces/IBuybackEngine.sol";
+import "./interfaces/IUniswapV2Router02.sol";
+import "./interfaces/IUniswapV2Factory.sol";
 
 /**
  * @title BuybackEngine
  * @notice Manages automated buybacks, revenue streams, and token burns for Ikigai V2
- * @dev Implements dynamic pressure system and strategic allocation
+ * @dev Implements dynamic pressure system and strategic allocation with Uniswap V2 integration
  */
-contract BuybackEngine is ReentrancyGuard, Pausable, AccessControl {
+contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessControl {
     using SafeERC20 for IERC20;
 
     // Roles
@@ -24,6 +27,11 @@ contract BuybackEngine is ReentrancyGuard, Pausable, AccessControl {
     IERC20 public immutable ikigaiToken;
     IERC20 public immutable stablecoin;
     AggregatorV3Interface public priceFeed;
+
+    // Uniswap integration
+    IUniswapV2Router02 public immutable uniswapRouter;
+    address public immutable uniswapPair;
+    uint256 public constant SLIPPAGE_TOLERANCE = 50; // 0.5%
 
     // Buyback parameters
     uint256 public constant BURN_RATIO = 8000;           // 80% of buybacks are burned
@@ -63,6 +71,19 @@ contract BuybackEngine is ReentrancyGuard, Pausable, AccessControl {
     }
     mapping(bytes32 => RevenueStream) public revenueStreams;
 
+    // Liquidity analysis parameters
+    uint256 public constant DEPTH_ANALYSIS_STEPS = 5;
+    uint256 public constant MIN_LIQUIDITY_DEPTH = 1000e18; // Minimum $1M depth
+    uint256 public constant MAX_DEPTH_IMPACT = 200; // 2% max impact per depth level
+    uint256 public constant DEPTH_THRESHOLD = 5000; // 50% minimum depth ratio
+
+    struct LiquidityDepth {
+        uint256 price;
+        uint256 volume;
+        uint256 impact;
+        bool sufficient;
+    }
+
     // Events
     event BuybackExecuted(
         uint256 amount,
@@ -89,11 +110,18 @@ contract BuybackEngine is ReentrancyGuard, Pausable, AccessControl {
         address _ikigaiToken,
         address _stablecoin,
         address _priceFeed,
+        address _uniswapRouter,
         address _admin
     ) {
         ikigaiToken = IERC20(_ikigaiToken);
         stablecoin = IERC20(_stablecoin);
         priceFeed = AggregatorV3Interface(_priceFeed);
+        uniswapRouter = IUniswapV2Router02(_uniswapRouter);
+
+        // Create or get Uniswap pair
+        address factory = uniswapRouter.factory();
+        uniswapPair = IUniswapV2Factory(factory).getPair(_ikigaiToken, _stablecoin);
+        require(uniswapPair != address(0), "Pair does not exist");
 
         _setupRole(DEFAULT_ADMIN_ROLE, _admin);
         _setupRole(OPERATOR_ROLE, _admin);
@@ -180,15 +208,22 @@ contract BuybackEngine is ReentrancyGuard, Pausable, AccessControl {
     /**
      * @notice Internal function to execute buyback
      */
-    function _executeBuyback() internal {
+    function _executeBuyback() internal override {
         uint256 amount = accumulatedFunds;
         uint256 currentPrice = getCurrentPrice();
         uint256 pressure = calculatePressure(currentPrice);
         
-        // Calculate buyback amount based on pressure
+        // Calculate initial buyback amount based on pressure
         uint256 buybackAmount = (amount * pressure) / 10000;
         
-        // Execute market buy (implement DEX integration here)
+        // Optimize amount based on liquidity depth
+        uint256 optimalAmount = calculateOptimalBuyback(buybackAmount);
+        require(optimalAmount > 0, "Insufficient liquidity depth");
+        
+        // Adjust buyback amount if needed
+        buybackAmount = optimalAmount < buybackAmount ? optimalAmount : buybackAmount;
+        
+        // Execute optimized buyback
         uint256 tokensBought = executeMarketBuy(buybackAmount);
         
         // Distribute bought tokens
@@ -199,7 +234,7 @@ contract BuybackEngine is ReentrancyGuard, Pausable, AccessControl {
         ikigaiToken.transfer(address(0xdead), tokensToBurn);
         
         // Send to rewards pool
-        address rewardsPool = getRewardsPool(); // Implement this
+        address rewardsPool = getRewardsPool();
         ikigaiToken.transfer(rewardsPool, tokensToRewards);
         
         // Update state
@@ -242,14 +277,147 @@ contract BuybackEngine is ReentrancyGuard, Pausable, AccessControl {
     }
 
     /**
-     * @notice Executes market buy order (placeholder for DEX integration)
+     * @notice Executes market buy order through Uniswap V2
      * @param amount Amount of stablecoin to spend
      * @return uint256 Amount of tokens bought
      */
     function executeMarketBuy(uint256 amount) internal returns (uint256) {
-        // Implement DEX integration here
-        // For now, return a dummy value
-        return amount * 1e18 / getCurrentPrice();
+        require(amount > 0, "Invalid amount");
+
+        // Approve router to spend stablecoin
+        stablecoin.safeApprove(address(uniswapRouter), amount);
+
+        // Calculate minimum tokens to receive based on current price and slippage
+        uint256 amountOutMin = calculateMinimumTokensOut(amount);
+
+        // Prepare swap path
+        address[] memory path = new address[](2);
+        path[0] = address(stablecoin);
+        path[1] = address(ikigaiToken);
+
+        // Execute swap
+        uint256[] memory amounts = uniswapRouter.swapExactTokensForTokens(
+            amount,
+            amountOutMin,
+            path,
+            address(this),
+            block.timestamp
+        );
+
+        // Return actual tokens received
+        return amounts[1];
+    }
+
+    /**
+     * @notice Calculates minimum tokens to receive based on current price and slippage
+     * @param amountIn Amount of stablecoin being spent
+     * @return uint256 Minimum tokens to receive
+     */
+    function calculateMinimumTokensOut(uint256 amountIn) public view returns (uint256) {
+        // Get current price from Chainlink
+        uint256 currentPrice = getCurrentPrice();
+        
+        // Calculate expected output at current price
+        uint256 expectedOut = (amountIn * 1e18) / currentPrice;
+        
+        // Apply slippage tolerance
+        return (expectedOut * (10000 - SLIPPAGE_TOLERANCE)) / 10000;
+    }
+
+    /**
+     * @notice Gets the current reserves of the Uniswap pair
+     * @return reserve0 Reserve of token0
+     * @return reserve1 Reserve of token1
+     */
+    function getUniswapReserves() public view returns (uint256 reserve0, uint256 reserve1) {
+        (uint112 _reserve0, uint112 _reserve1,) = IUniswapV2Pair(uniswapPair).getReserves();
+        return (uint256(_reserve0), uint256(_reserve1));
+    }
+
+    /**
+     * @notice Analyzes liquidity depth at multiple price levels
+     * @param amount Amount of stablecoin to analyze
+     * @return depths Array of liquidity depth data
+     */
+    function analyzeLiquidityDepth(uint256 amount) public view returns (LiquidityDepth[] memory) {
+        LiquidityDepth[] memory depths = new LiquidityDepth[](DEPTH_ANALYSIS_STEPS);
+        
+        // Get initial reserves
+        (uint256 reserve0, uint256 reserve1) = getUniswapReserves();
+        uint256 stepSize = amount / DEPTH_ANALYSIS_STEPS;
+        
+        // Analyze each depth level
+        for (uint i = 0; i < DEPTH_ANALYSIS_STEPS; i++) {
+            uint256 depthAmount = stepSize * (i + 1);
+            
+            // Calculate constant product price impact
+            uint256 priceAfter = (reserve0 * reserve1) / (reserve0 + depthAmount);
+            uint256 priceImpact = ((reserve1 - priceAfter) * 10000) / reserve1;
+            
+            // Calculate effective price at this depth
+            uint256 effectivePrice = (reserve1 * 1e18) / (reserve0 + depthAmount);
+            
+            // Check if depth is sufficient
+            bool isSufficient = reserve0 >= MIN_LIQUIDITY_DEPTH &&
+                              priceImpact <= MAX_DEPTH_IMPACT &&
+                              (reserve0 * 10000 / (reserve0 + depthAmount)) >= DEPTH_THRESHOLD;
+            
+            depths[i] = LiquidityDepth({
+                price: effectivePrice,
+                volume: depthAmount,
+                impact: priceImpact,
+                sufficient: isSufficient
+            });
+        }
+        
+        return depths;
+    }
+
+    /**
+     * @notice Determines optimal buyback size based on liquidity depth
+     * @param amount Proposed buyback amount
+     * @return optimalAmount Adjusted buyback amount
+     */
+    function calculateOptimalBuyback(uint256 amount) public view returns (uint256) {
+        LiquidityDepth[] memory depths = analyzeLiquidityDepth(amount);
+        
+        // Find optimal execution point
+        uint256 optimalAmount = 0;
+        for (uint i = 0; i < depths.length; i++) {
+            if (!depths[i].sufficient) {
+                break;
+            }
+            optimalAmount = depths[i].volume;
+        }
+        
+        return optimalAmount;
+    }
+
+    /**
+     * @notice Enhanced price impact check with depth analysis
+     * @param amount Amount of stablecoin to spend
+     * @return bool Whether the trade can be executed safely
+     */
+    function checkPriceImpact(uint256 amount) public view returns (bool) {
+        (uint256 reserve0, uint256 reserve1) = getUniswapReserves();
+        
+        // Basic price impact check
+        uint256 priceImpact = (amount * 10000) / reserve0;
+        if (priceImpact > 300) { // 3% max impact
+            return false;
+        }
+        
+        // Depth analysis check
+        LiquidityDepth[] memory depths = analyzeLiquidityDepth(amount);
+        
+        // Require sufficient depth for entire amount
+        for (uint i = 0; i < depths.length; i++) {
+            if (!depths[i].sufficient) {
+                return false;
+            }
+        }
+        
+        return true;
     }
 
     /**
@@ -310,5 +478,34 @@ contract BuybackEngine is ReentrancyGuard, Pausable, AccessControl {
     function getRewardsPool() internal view returns (address) {
         // Implement rewards pool address retrieval
         return address(0x123); // Placeholder
+    }
+
+    /**
+     * @notice Gets detailed liquidity analysis
+     * @return totalDepth Total liquidity depth
+     * @return optimalExecutionSize Recommended max trade size
+     * @return averageImpact Average price impact across depths
+     */
+    function getLiquidityAnalysis() external view returns (
+        uint256 totalDepth,
+        uint256 optimalExecutionSize,
+        uint256 averageImpact
+    ) {
+        (uint256 reserve0, uint256 reserve1) = getUniswapReserves();
+        totalDepth = reserve0;
+        
+        LiquidityDepth[] memory depths = analyzeLiquidityDepth(reserve0 / 2);
+        
+        uint256 totalImpact;
+        for (uint i = 0; i < depths.length; i++) {
+            if (depths[i].sufficient) {
+                optimalExecutionSize = depths[i].volume;
+                totalImpact += depths[i].impact;
+            }
+        }
+        
+        averageImpact = totalImpact / depths.length;
+        
+        return (totalDepth, optimalExecutionSize, averageImpact);
     }
 } 
