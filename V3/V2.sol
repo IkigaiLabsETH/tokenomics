@@ -1,133 +1,162 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "@thirdweb-dev/contracts/base/ERC20DropVote.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
+import "./interfaces/IBuybackEngine.sol";
 
-contract V2 is ERC20DropVote, ReentrancyGuard, Pausable, AccessControl {
-    // Roles
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+contract IkigaiV2 is ERC20, ERC20Burnable, Pausable, AccessControl {
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
-    // Supply constants
-    uint256 public constant MAX_SUPPLY = 1_000_000_000 * 10**18; // 1 billion tokens
-    uint256 public constant DAILY_MINT_CAP = 684931 * 10**18; // ~250M annually
-    uint256 public constant MAX_TX_SIZE = 1_000_000 * 10**18; // 1M tokens
+    // Buyback integration
+    IBuybackEngine public buybackEngine;
 
-    // Rate limiting
-    uint256 public constant RATE_LIMIT_PERIOD = 1 hours;
-    uint256 public constant MAX_ACTIONS_PER_PERIOD = 10;
-    mapping(address => uint256) public lastActionTimestamp;
-    mapping(address => uint256) public actionsInPeriod;
+    // Transfer limits
+    uint256 public constant MAX_TRANSFER = 1_000_000 * 10**18; // 1M tokens
+    uint256 public constant TRANSFER_COOLDOWN = 1 minutes;
+    mapping(address => uint256) public lastTransferTime;
 
-    // Circuit breakers
-    uint256 public dailyMintedAmount;
-    uint256 public lastMintReset;
-
-    // Fee distribution
-    uint256 public constant TRADING_FEE = 250; // 2.5%
-    uint256 public constant STAKING_SHARE = 50; // 50% of trading fees
-    uint256 public constant LIQUIDITY_SHARE = 30; // 30% of trading fees
-    uint256 public constant TREASURY_SHARE = 15; // 15% of trading fees
-    uint256 public constant BURN_SHARE = 5; // 5% of trading fees
+    // Buyback parameters
+    uint256 public constant BUYBACK_TAX = 100; // 1% tax on transfers
+    uint256 public constant MIN_BUYBACK_AMOUNT = 1000 * 10**18; // 1000 tokens
+    bool public buybackEnabled = true;
 
     // Events
-    event CircuitBreaker(string reason);
-    event FeeDistributed(uint256 stakingAmount, uint256 liquidityAmount, uint256 treasuryAmount, uint256 burnAmount);
+    event BuybackCollected(uint256 amount);
+    event BuybackEngineUpdated(address indexed newEngine);
+    event TransferLimitUpdated(uint256 newLimit);
 
     constructor(
-        address _defaultAdmin,
-        string memory _name,
-        string memory _symbol,
-        address _primarySaleRecipient
-    )
-        ERC20DropVote(
-            _defaultAdmin,
-            _name,
-            _symbol,
-            _primarySaleRecipient
-        )
-    {
-        _setupRole(DEFAULT_ADMIN_ROLE, _defaultAdmin);
-        _setupRole(ADMIN_ROLE, _defaultAdmin);
-        lastMintReset = block.timestamp;
+        address _admin,
+        address _buybackEngine
+    ) ERC20("Ikigai V2", "IKIGAI") {
+        _setupRole(DEFAULT_ADMIN_ROLE, _admin);
+        _setupRole(MINTER_ROLE, _admin);
+        _setupRole(OPERATOR_ROLE, _admin);
+        
+        buybackEngine = IBuybackEngine(_buybackEngine);
     }
 
-    // Supply Management
-    function mint(address to, uint256 amount) 
-        public 
-        override 
-        nonReentrant 
-        whenNotPaused 
-        returns (bool) 
-    {
-        require(checkRateLimit(msg.sender), "Rate limit exceeded");
-        require(amount <= MAX_TX_SIZE, "Transaction size too large");
-        require(totalSupply() + amount <= MAX_SUPPLY, "Exceeds max supply");
+    // Minting function
+    function mint(address to, uint256 amount) external {
+        require(hasRole(MINTER_ROLE, msg.sender), "Must have minter role");
+        _mint(to, amount);
+    }
 
-        // Daily mint cap check
-        if (block.timestamp >= lastMintReset + 1 days) {
-            dailyMintedAmount = 0;
-            lastMintReset = block.timestamp;
+    // Override transfer function to include buyback logic
+    function transfer(
+        address recipient, 
+        uint256 amount
+    ) public virtual override returns (bool) {
+        require(amount <= MAX_TRANSFER, "Transfer exceeds limit");
+        require(
+            block.timestamp >= lastTransferTime[msg.sender] + TRANSFER_COOLDOWN,
+            "Transfer cooldown active"
+        );
+
+        // Calculate buyback amount
+        uint256 buybackAmount = (amount * BUYBACK_TAX) / 10000;
+        uint256 transferAmount = amount - buybackAmount;
+
+        // Process buyback if enabled and amount is sufficient
+        if (buybackEnabled && buybackAmount > 0) {
+            // Transfer buyback amount to buyback engine
+            super.transfer(address(buybackEngine), buybackAmount);
+            
+            // Notify buyback engine
+            buybackEngine.collectRevenue(
+                keccak256("TRANSFER_FEES"),
+                buybackAmount
+            );
+            
+            emit BuybackCollected(buybackAmount);
         }
-        require(dailyMintedAmount + amount <= DAILY_MINT_CAP, "Daily mint cap exceeded");
-        
-        dailyMintedAmount += amount;
-        return super.mint(to, amount);
-    }
 
-    // Rate Limiting
-    function checkRateLimit(address account) internal returns (bool) {
-        if (block.timestamp >= lastActionTimestamp[account] + RATE_LIMIT_PERIOD) {
-            lastActionTimestamp[account] = block.timestamp;
-            actionsInPeriod[account] = 1;
-            return true;
+        // Process main transfer
+        bool success = super.transfer(recipient, transferAmount);
+        if (success) {
+            lastTransferTime[msg.sender] = block.timestamp;
         }
-        
-        require(actionsInPeriod[account] < MAX_ACTIONS_PER_PERIOD, "Rate limit exceeded");
-        actionsInPeriod[account]++;
-        return true;
+        return success;
     }
 
-    // Fee Distribution
-    function distributeFees(uint256 amount) external nonReentrant {
-        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not an operator");
-        
-        uint256 stakingAmount = (amount * STAKING_SHARE) / 100;
-        uint256 liquidityAmount = (amount * LIQUIDITY_SHARE) / 100;
-        uint256 treasuryAmount = (amount * TREASURY_SHARE) / 100;
-        uint256 burnAmount = (amount * BURN_SHARE) / 100;
+    // Override transferFrom to include buyback logic
+    function transferFrom(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) public virtual override returns (bool) {
+        require(amount <= MAX_TRANSFER, "Transfer exceeds limit");
+        require(
+            block.timestamp >= lastTransferTime[sender] + TRANSFER_COOLDOWN,
+            "Transfer cooldown active"
+        );
 
-        // Implement fee distribution logic here
-        _burn(address(this), burnAmount);
-        
-        emit FeeDistributed(stakingAmount, liquidityAmount, treasuryAmount, burnAmount);
+        // Calculate buyback amount
+        uint256 buybackAmount = (amount * BUYBACK_TAX) / 10000;
+        uint256 transferAmount = amount - buybackAmount;
+
+        // Process buyback if enabled and amount is sufficient
+        if (buybackEnabled && buybackAmount > 0) {
+            // Transfer buyback amount to buyback engine
+            super.transferFrom(sender, address(buybackEngine), buybackAmount);
+            
+            // Notify buyback engine
+            buybackEngine.collectRevenue(
+                keccak256("TRANSFER_FEES"),
+                buybackAmount
+            );
+            
+            emit BuybackCollected(buybackAmount);
+        }
+
+        // Process main transfer
+        bool success = super.transferFrom(sender, recipient, transferAmount);
+        if (success) {
+            lastTransferTime[sender] = block.timestamp;
+        }
+        return success;
     }
 
-    // Emergency Controls
+    // Admin functions
+    function updateBuybackEngine(address newEngine) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Must be admin");
+        require(newEngine != address(0), "Invalid address");
+        buybackEngine = IBuybackEngine(newEngine);
+        emit BuybackEngineUpdated(newEngine);
+    }
+
+    function toggleBuyback(bool enabled) external {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Must be operator");
+        buybackEnabled = enabled;
+    }
+
     function pause() external {
-        require(hasRole(ADMIN_ROLE, msg.sender), "Caller is not an admin");
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Must be operator");
         _pause();
     }
 
     function unpause() external {
-        require(hasRole(ADMIN_ROLE, msg.sender), "Caller is not an admin");
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Must be operator");
         _unpause();
     }
 
-    // Circuit Breaker
+    // Required overrides
     function _beforeTokenTransfer(
         address from,
         address to,
         uint256 amount
-    ) internal virtual override whenNotPaused {
+    ) internal override whenNotPaused {
         super._beforeTokenTransfer(from, to, amount);
-        
-        if (amount > MAX_TX_SIZE) {
-            emit CircuitBreaker("Transaction size exceeds limit");
-            revert("Transaction size too large");
-        }
+    }
+
+    // The following functions are overrides required by Solidity
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override returns (bool) {
+        return super.supportsInterface(interfaceId);
     }
 }

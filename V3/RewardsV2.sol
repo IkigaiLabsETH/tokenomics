@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IBuybackEngine.sol";
 
 contract RewardsV2 is ReentrancyGuard, Pausable, AccessControl {
     using SafeERC20 for IERC20;
@@ -46,6 +47,12 @@ contract RewardsV2 is ReentrancyGuard, Pausable, AccessControl {
     uint256 public constant MAX_REFERRALS = 100;
     uint256 public constant MIN_TRADE_FOR_REFERRAL = 0.1 * 10**18; // 0.1 BERA
 
+    // Add buyback engine reference
+    IBuybackEngine public buybackEngine;
+    
+    // Add buyback configuration
+    uint256 public constant TRADING_BUYBACK_SHARE = 2500; // 25% of trading fees to buyback
+
     struct UserStats {
         uint256 lastTradeTime;
         uint256 weeklyVolume;
@@ -81,8 +88,13 @@ contract RewardsV2 is ReentrancyGuard, Pausable, AccessControl {
         address indexed referred
     );
 
-    constructor(address _ikigaiToken, address _admin) {
+    constructor(
+        address _ikigaiToken,
+        address _buybackEngine,
+        address _admin
+    ) {
         ikigaiToken = IERC20(_ikigaiToken);
+        buybackEngine = IBuybackEngine(_buybackEngine);
         _setupRole(DEFAULT_ADMIN_ROLE, _admin);
         _setupRole(OPERATOR_ROLE, _admin);
     }
@@ -173,6 +185,13 @@ contract RewardsV2 is ReentrancyGuard, Pausable, AccessControl {
         stats.lastTradeTime = block.timestamp;
         if (stats.holdStartTime == 0) {
             stats.holdStartTime = block.timestamp;
+        }
+
+        // Calculate and send buyback allocation
+        uint256 buybackAmount = (tradeAmount * TRADING_BUYBACK_SHARE) / 10000;
+        if (buybackAmount > 0) {
+            ikigaiToken.safeApprove(address(buybackEngine), buybackAmount);
+            buybackEngine.collectRevenue(keccak256("TRADING_FEES"), buybackAmount);
         }
 
         // Transfer reward

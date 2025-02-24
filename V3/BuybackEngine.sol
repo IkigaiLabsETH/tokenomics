@@ -33,35 +33,31 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
     address public immutable uniswapPair;
     uint256 public constant SLIPPAGE_TOLERANCE = 50; // 0.5%
 
-    // Buyback parameters
-    uint256 public constant BURN_RATIO = 8000;           // 80% of buybacks are burned
-    uint256 public constant REWARD_POOL_RATIO = 2000;    // 20% to rewards pool
-    uint256 public constant MIN_BUYBACK_AMOUNT = 100e18; // Minimum buyback size
-    uint256 public constant PRICE_DECIMALS = 8;          // Chainlink price decimals
-
-    // Pressure system parameters
+    // Updated pressure system parameters
     uint256 public constant BASE_PRESSURE = 5000;        // 50% base buyback pressure
     uint256 public constant MAX_PRESSURE = 8000;         // 80% max buyback pressure
     uint256 public constant PRESSURE_INCREASE_RATE = 500; // 5% increase per level
     uint256 public constant PRESSURE_LEVELS = 6;         // Number of pressure levels
 
-    // Revenue distribution
+    // Updated revenue distribution
     uint256 public constant NFT_SALES_BUYBACK = 3000;    // 30% of NFT sales
     uint256 public constant PLATFORM_FEES_BUYBACK = 2500; // 25% of platform fees
     uint256 public constant TREASURY_YIELD_BUYBACK = 2000;// 20% of treasury yield
 
-    // Cooldown and thresholds
-    uint256 public constant BUYBACK_COOLDOWN = 1 days;
-    uint256 public lastBuybackTime;
-    uint256 public accumulatedFunds;
+    // Updated distribution ratios
+    uint256 public constant BURN_RATIO = 8000;           // 80% of buybacks are burned
+    uint256 public constant REWARD_POOL_RATIO = 2000;    // 20% to rewards pool
 
-    // Price thresholds
-    struct PriceThreshold {
-        uint256 price;
-        uint256 pressureLevel;
-        bool active;
-    }
-    PriceThreshold[] public priceThresholds;
+    // Updated safety parameters
+    uint256 public constant MIN_BUYBACK_AMOUNT = 100e18; // Minimum buyback size
+    uint256 public constant BUYBACK_COOLDOWN = 1 days;   // 24 hour cooldown
+    uint256 public constant PRICE_DECIMALS = 8;          // Chainlink price decimals
+
+    // New liquidity protection parameters
+    uint256 public constant DEPTH_ANALYSIS_STEPS = 5;
+    uint256 public constant MIN_LIQUIDITY_DEPTH = 1000e18; // $1M minimum depth
+    uint256 public constant MAX_DEPTH_IMPACT = 200;      // 2% max impact per level
+    uint256 public constant DEPTH_THRESHOLD = 5000;      // 50% minimum depth ratio
 
     // Revenue tracking
     struct RevenueStream {
@@ -70,12 +66,6 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
         uint256 buybackAllocation;
     }
     mapping(bytes32 => RevenueStream) public revenueStreams;
-
-    // Liquidity analysis parameters
-    uint256 public constant DEPTH_ANALYSIS_STEPS = 5;
-    uint256 public constant MIN_LIQUIDITY_DEPTH = 1000e18; // Minimum $1M depth
-    uint256 public constant MAX_DEPTH_IMPACT = 200; // 2% max impact per depth level
-    uint256 public constant DEPTH_THRESHOLD = 5000; // 50% minimum depth ratio
 
     struct LiquidityDepth {
         uint256 price;
@@ -374,7 +364,7 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
     }
 
     /**
-     * @notice Determines optimal buyback size based on liquidity depth
+     * @notice Calculates optimal buyback size based on liquidity depth
      * @param amount Proposed buyback amount
      * @return optimalAmount Adjusted buyback amount
      */

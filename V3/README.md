@@ -201,3 +201,205 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 <div align="center">
 Made with 💜 by Ikigai Labs
 </div>
+
+# Ikigai V3 Protocol
+
+## Buyback Mechanics
+
+### Overview
+The Ikigai V3 Protocol features a sophisticated buyback system that automatically collects fees from multiple revenue streams and executes strategic token buybacks based on market conditions.
+
+### Revenue Sources
+| Source | Allocation | Description |
+|--------|------------|-------------|
+| Trading Fees | 25% | From all trading activity |
+| NFT Sales | 30% | Primary and secondary sales |
+| Treasury Yield | 20% | From treasury investments |
+| Transfer Tax | 1% | On token transfers |
+| Staking Fees | 20% | From staking operations |
+
+### Buyback Engine
+
+#### Pressure System
+- Base Pressure: 50% of accumulated funds
+- Maximum Pressure: 80% of accumulated funds
+- Dynamic adjustment based on price levels:
+
+| Price Level | Pressure Increase | Total Pressure |
+|-------------|------------------|----------------|
+| $0.50 | +5% | 55% |
+| $0.40 | +10% | 60% |
+| $0.30 | +15% | 65% |
+| $0.20 | +20% | 70% |
+| $0.10 | +25% | 75% |
+
+#### Safety Parameters
+```solidity
+struct SafetyLimits {
+    uint256 minBuyback: 100 tokens,    // Minimum execution size
+    uint256 cooldown: 24 hours,        // Between buybacks
+    uint256 slippage: 0.5%,           // Maximum allowed
+    uint256 minLiquidity: $1M,        // Required depth
+    uint256 maxImpact: 2%,            // Per depth level
+    uint256 depthRatio: 50%           // Minimum required
+}
+```
+
+#### Execution Flow
+1. Revenue Collection
+   - Multiple sources feed buyback pool
+   - Automatic allocation tracking
+   - Accumulation until threshold met
+
+2. Buyback Trigger
+   ```typescript
+   conditions = {
+     timePassed: > 24 hours,
+     minFunds: >= 100 tokens,
+     liquidityOK: true
+   }
+   ```
+
+3. Smart Execution
+   - Dynamic pressure calculation
+   - Liquidity depth analysis
+   - Size optimization
+   - Market buy execution
+   - Token distribution
+
+### Distribution
+- 80% of bought tokens are burned
+- 20% to staking rewards pool
+
+### Integration Points
+
+#### Core Contracts
+```solidity
+interface IBuybackEngine {
+    function executeBuyback() external;
+    function collectRevenue(bytes32 source, uint256 amount) external;
+    function calculatePressure(uint256 currentPrice) external view returns (uint256);
+}
+```
+
+#### Revenue Collection
+```solidity
+// In V2.sol
+function transfer(address to, uint256 amount) public override returns (bool) {
+    uint256 buybackAmount = amount * BUYBACK_TAX / 10000; // 1%
+    buybackEngine.collectRevenue("TRANSFER_FEES", buybackAmount);
+    // ... transfer logic
+}
+```
+
+### Monitoring & Analytics
+
+#### Key Metrics
+- Accumulated funds
+- Last buyback time
+- Revenue stream stats
+- Liquidity depth analysis
+- Price impact measurements
+
+#### Events
+```solidity
+event BuybackExecuted(
+    uint256 amount,
+    uint256 tokensBought,
+    uint256 tokensBurned,
+    uint256 tokensToRewards
+);
+
+event RevenueCollected(
+    bytes32 indexed source,
+    uint256 amount,
+    uint256 buybackAllocation
+);
+```
+
+### Safety Features
+
+#### Circuit Breakers
+- Price-based triggers
+- Volume anomaly detection
+- Liquidity protection
+- Manual override capability
+
+#### Recovery Procedures
+- System pause functionality
+- Fund recovery mechanisms
+- State reset capabilities
+- Emergency fund protection
+
+### Performance Optimization
+
+#### Gas Efficiency
+- Batched operations
+- Optimized state updates
+- Minimal external calls
+- Strategic execution timing
+
+#### Market Impact
+- Smart order sizing
+- Liquidity analysis
+- Impact minimization
+- Execution splitting
+
+## Contract Integration
+
+### V2 Token
+```solidity
+// Buyback parameters
+uint256 public constant BUYBACK_TAX = 100; // 1% tax
+uint256 public constant MIN_BUYBACK_AMOUNT = 1000e18;
+bool public buybackEnabled = true;
+
+// Integration
+IBuybackEngine public buybackEngine;
+```
+
+### StakingV2
+```solidity
+// Buyback allocation
+uint256 public constant STAKING_BUYBACK_SHARE = 2000; // 20%
+IBuybackEngine public buybackEngine;
+```
+
+### RewardsV2
+```solidity
+// Trading fee buyback
+uint256 public constant TRADING_BUYBACK_SHARE = 2500; // 25%
+IBuybackEngine public buybackEngine;
+```
+
+### TreasuryV2
+```solidity
+// Treasury yield buyback
+uint256 public constant BUYBACK_SHARE = 2000; // 20%
+IBuybackEngine public buybackEngine;
+```
+
+## Testing & Deployment
+
+### Test Coverage
+- Revenue collection
+- Buyback execution
+- Pressure calculation
+- Safety parameters
+- Emergency procedures
+
+### Deployment Steps
+1. Deploy BuybackEngine
+2. Deploy V2 token with buyback
+3. Configure revenue sources
+4. Set up monitoring
+5. Enable buyback system
+
+### Security Considerations
+- Rate limiting on buybacks
+- Slippage protection
+- Liquidity validation
+- Access control
+- Emergency stops
+
+[Additional protocol documentation...]

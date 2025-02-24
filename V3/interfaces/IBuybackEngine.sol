@@ -7,6 +7,13 @@ pragma solidity ^0.8.0;
  * @dev Handles revenue collection, buybacks, and token burns
  */
 interface IBuybackEngine {
+    struct LiquidityDepth {
+        uint256 price;
+        uint256 volume;
+        uint256 impact;
+        bool sufficient;
+    }
+
     /**
      * @notice Structure for price threshold configuration
      */
@@ -92,6 +99,11 @@ interface IBuybackEngine {
      * @notice Resumes buyback operations
      */
     function unpause() external;
+
+    // Analysis functions
+    function analyzeLiquidityDepth(uint256 amount) external view returns (LiquidityDepth[] memory);
+    function calculateOptimalBuyback(uint256 amount) external view returns (uint256);
+    function checkPriceImpact(uint256 amount) external view returns (bool);
 
     // Events
     event BuybackExecuted(

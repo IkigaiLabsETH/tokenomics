@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IBuybackEngine.sol";
 
 contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
     using SafeERC20 for IERC20;
@@ -25,10 +26,10 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
     uint256 public constant MIN_LIQUIDITY = 1000 * 10**18; // 1,000 tokens
 
     // Distribution ratios (in basis points)
-    uint256 public constant STAKING_SHARE = 5000;  // 50%
-    uint256 public constant LIQUIDITY_SHARE = 3000; // 30%
-    uint256 public constant OPERATIONS_SHARE = 1500; // 15%
-    uint256 public constant BURN_SHARE = 500;       // 5%
+    uint256 public constant BUYBACK_SHARE = 2000;   // 20% to buybacks
+    uint256 public constant STAKING_SHARE = 4000;   // 40% (reduced from 50%)
+    uint256 public constant LIQUIDITY_SHARE = 2500; // 25% (reduced from 30%)
+    uint256 public constant OPERATIONS_SHARE = 1500; // 15% unchanged
 
     // Addresses
     address public stakingContract;
@@ -41,12 +42,15 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
     uint256 public liquidityBalance;
     uint256 public lastRebalance;
 
+    // Add buyback engine reference
+    IBuybackEngine public buybackEngine;
+
     // Events
     event RevenueDistributed(
+        uint256 buybackAmount,
         uint256 stakingAmount,
         uint256 liquidityAmount,
-        uint256 operationsAmount,
-        uint256 burnAmount
+        uint256 operationsAmount
     );
     event LiquidityRebalanced(uint256 amount, bool added);
     event AddressesUpdated(
@@ -58,6 +62,7 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
     constructor(
         address _ikigaiToken,
         address _stablecoin,
+        address _buybackEngine,
         address _admin,
         address _stakingContract,
         address _liquidityPool,
@@ -69,6 +74,7 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         liquidityPool = _liquidityPool;
         operationsWallet = _operationsWallet;
         burnAddress = address(0xdead);
+        buybackEngine = IBuybackEngine(_buybackEngine);
 
         _setupRole(DEFAULT_ADMIN_ROLE, _admin);
         _setupRole(OPERATOR_ROLE, _admin);
@@ -102,11 +108,17 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         uint256 balance = ikigaiToken.balanceOf(address(this));
         require(balance > 0, "No tokens to distribute");
 
-        // Calculate shares
+        // Calculate shares including buyback
+        uint256 buybackAmount = (balance * BUYBACK_SHARE) / 10000;
         uint256 stakingAmount = (balance * STAKING_SHARE) / 10000;
         uint256 liquidityAmount = (balance * LIQUIDITY_SHARE) / 10000;
         uint256 operationsAmount = (balance * OPERATIONS_SHARE) / 10000;
-        uint256 burnAmount = (balance * BURN_SHARE) / 10000;
+
+        // Process buyback
+        if (buybackAmount > 0) {
+            ikigaiToken.safeApprove(address(buybackEngine), buybackAmount);
+            buybackEngine.collectRevenue(keccak256("TREASURY_YIELD"), buybackAmount);
+        }
 
         // Transfer shares
         if (stakingAmount > 0) {
@@ -118,15 +130,12 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         if (operationsAmount > 0) {
             ikigaiToken.safeTransfer(operationsWallet, operationsAmount);
         }
-        if (burnAmount > 0) {
-            ikigaiToken.safeTransfer(burnAddress, burnAmount);
-        }
 
         emit RevenueDistributed(
+            buybackAmount,
             stakingAmount,
             liquidityAmount,
-            operationsAmount,
-            burnAmount
+            operationsAmount
         );
     }
 

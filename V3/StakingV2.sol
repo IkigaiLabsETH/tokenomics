@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IBuybackEngine.sol";
 
 contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
     using SafeERC20 for IERC20;
@@ -34,6 +35,12 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
     // Base staking rate (in basis points)
     uint256 public constant BASE_RATE = 200; // 2%
 
+    // Add buyback engine reference
+    IBuybackEngine public buybackEngine;
+
+    // Add buyback configuration
+    uint256 public constant STAKING_BUYBACK_SHARE = 2000; // 20% of staking fees to buyback
+
     struct Stake {
         uint256 amount;
         uint256 startTime;
@@ -55,8 +62,13 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
     event RewardsClaimed(address indexed user, uint256 amount);
     event TierUpgraded(address indexed user, uint256 oldTier, uint256 newTier);
 
-    constructor(address _ikigaiToken, address _admin) {
+    constructor(
+        address _ikigaiToken,
+        address _buybackEngine,
+        address _admin
+    ) {
         ikigaiToken = IERC20(_ikigaiToken);
+        buybackEngine = IBuybackEngine(_buybackEngine);
         _setupRole(DEFAULT_ADMIN_ROLE, _admin);
         _setupRole(OPERATOR_ROLE, _admin);
     }
@@ -105,6 +117,13 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
 
         totalStaked += amount;
         
+        // Calculate and send buyback allocation
+        uint256 buybackAmount = (amount * STAKING_BUYBACK_SHARE) / 10000;
+        if (buybackAmount > 0) {
+            ikigaiToken.safeApprove(address(buybackEngine), buybackAmount);
+            buybackEngine.collectRevenue(keccak256("STAKING_FEES"), buybackAmount);
+        }
+
         emit Staked(msg.sender, amount, lockPeriod);
         if (tier > 0) {
             emit TierUpgraded(msg.sender, 0, tier);
