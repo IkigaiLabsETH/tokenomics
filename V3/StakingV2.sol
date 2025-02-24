@@ -7,8 +7,14 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/IBuybackEngine.sol";
+import "./interfaces/IStakingV2.sol";
 
-contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
+/**
+ * @title StakingV2
+ * @notice Advanced staking system with tiered rewards and composable positions
+ * @dev Implements flexible lock periods, tier-based multipliers, and governance weighting
+ */
+contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
     using SafeERC20 for IERC20;
 
     // Roles
@@ -66,6 +72,7 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
     event TierUpgraded(address indexed user, uint256 oldTier, uint256 newTier);
     event FeeExemptionUpdated(address indexed account, bool exempt);
     event EmergencyRecovery(address indexed token, uint256 amount);
+    event StakesCombined(address indexed user, uint256 newStakeId, uint256[] stakeIds);
 
     constructor(
         address _ikigaiToken,
@@ -240,5 +247,125 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
         
         IERC20(token).safeTransfer(msg.sender, amount);
         emit EmergencyRecovery(token, amount);
+    }
+
+    /**
+     * @notice Combines multiple stakes into a single stake
+     * @param _stakeIds Array of stake IDs to combine
+     * @return New stake ID
+     */
+    function combineStakes(uint256[] calldata _stakeIds) external nonReentrant returns (uint256) {
+        require(_stakeIds.length > 1, "Need at least 2 stakes");
+        
+        uint256 totalAmount = 0;
+        uint256 weightedLockPeriod = 0;
+        
+        // Verify ownership and calculate combined properties
+        for (uint256 i = 0; i < _stakeIds.length; i++) {
+            uint256 stakeId = _stakeIds[i];
+            require(stakeOwner[stakeId] == msg.sender, "Not owner of all stakes");
+            
+            Stake storage userStake = stakes[stakeId];
+            require(userStake.active, "Stake not active");
+            
+            // Add rewards to pending rewards
+            uint256 rewards = calculateRewards(stakeId);
+            if (rewards > 0) {
+                pendingRewards[msg.sender] += rewards;
+            }
+            
+            // Calculate weighted lock period
+            weightedLockPeriod += userStake.amount * userStake.lockPeriod;
+            totalAmount += userStake.amount;
+        }
+        
+        // Calculate final weighted lock period
+        weightedLockPeriod = weightedLockPeriod / totalAmount;
+        
+        // Create new combined stake
+        uint256 newStakeId = _createStake(totalAmount, weightedLockPeriod);
+        
+        // Close original stakes
+        for (uint256 i = 0; i < _stakeIds.length; i++) {
+            _closeStake(_stakeIds[i]);
+        }
+        
+        emit StakesCombined(msg.sender, newStakeId, _stakeIds);
+        
+        return newStakeId;
+    }
+
+    /**
+     * @notice Closes a stake without transferring tokens
+     * @param _stakeId Stake ID to close
+     */
+    function _closeStake(uint256 _stakeId) internal {
+        Stake storage userStake = stakes[_stakeId];
+        userStake.active = false;
+    }
+
+    /**
+     * @notice Gets user's voting power based on stake amount and duration
+     * @param _user User address
+     * @return votingPower Voting power in basis points
+     */
+    function getVotingPower(address _user) external view override returns (uint256 votingPower) {
+        uint256[] memory userStakes = userStakeIds[_user];
+        if (userStakes.length == 0) return 0;
+        
+        uint256 totalVotingPower = 0;
+        
+        for (uint256 i = 0; i < userStakes.length; i++) {
+            Stake storage userStake = stakes[userStakes[i]];
+            if (userStake.active) {
+                // Voting power = amount * (lockDuration / 30 days) / 4
+                // This gives a max 4x multiplier for 120-day locks
+                uint256 durationMultiplier = userStake.lockPeriod / 30 days;
+                if (durationMultiplier > 4) durationMultiplier = 4;
+                
+                totalVotingPower += userStake.amount * durationMultiplier / 4;
+            }
+        }
+        
+        return totalVotingPower;
+    }
+
+    /**
+     * @notice Gets user's APY based on tier and lock duration
+     * @param _user User address
+     * @return apy Annual percentage yield in basis points
+     */
+    function getUserAPY(address _user) external view override returns (uint256 apy) {
+        uint256[] memory userStakes = userStakeIds[_user];
+        if (userStakes.length == 0) return 0;
+        
+        uint256 totalStaked = 0;
+        uint256 weightedApy = 0;
+        
+        for (uint256 i = 0; i < userStakes.length; i++) {
+            Stake storage userStake = stakes[userStakes[i]];
+            if (userStake.active) {
+                // Calculate base APY based on tier
+                uint256 baseApy = BASE_RATE;
+                if (userStake.tier == 1) {
+                    baseApy = BASE_RATE + 500; // +5%
+                } else if (userStake.tier == 2) {
+                    baseApy = BASE_RATE + 1000; // +10%
+                } else if (userStake.tier == 3) {
+                    baseApy = BASE_RATE + 1500; // +15%
+                }
+                
+                // Calculate lock duration bonus
+                uint256 weeklyBonus = (userStake.lockPeriod / 1 weeks) * WEEKLY_BONUS;
+                uint256 stakeApy = baseApy + weeklyBonus;
+                
+                // Add weighted APY
+                weightedApy += userStake.amount * stakeApy;
+                totalStaked += userStake.amount;
+            }
+        }
+        
+        if (totalStaked == 0) return 0;
+        return weightedApy / totalStaked;
     }
 } 

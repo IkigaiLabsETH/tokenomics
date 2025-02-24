@@ -57,6 +57,11 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
     uint256 public collectionBonusBps = 250; // 2.5% per collection
     uint256 public maxCollectionBonus = 1000; // 10% max
     
+    // Referral system
+    mapping(address => address) public referrers;
+    mapping(address => uint256) public referralRewards;
+    uint256 public referralRewardBps = 500; // 5% of mint price
+    
     // Events
     event BuybackContribution(uint256 amount);
     event CreatorPayment(address indexed creator, uint256 amount);
@@ -76,6 +81,9 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
     event StakingRequirementToggled(bool required);
     event CollectionRegistered(address indexed collection);
     event CollectionBonusUpdated(uint256 bonusBps, uint256 maxBonus);
+    event ReferralRecorded(address indexed user, address indexed referrer, uint256 amount);
+    event ReferralRewardsClaimed(address indexed referrer, uint256 amount);
+    event ReferralRewardUpdated(uint256 rewardBps);
     
     constructor(
         address _defaultAdmin,
@@ -523,5 +531,90 @@ contract IkigaiNFT is ERC721DelayedReveal, ReentrancyGuard {
         maxCollectionBonus = _maxBonus;
         
         emit CollectionBonusUpdated(_bonusBps, _maxBonus);
+    }
+    
+    /**
+     * @notice Mints NFT with referral
+     * @param _quantity Number of NFTs to mint
+     * @param _referrer Address of the referrer
+     */
+    function mintWithReferral(uint256 _quantity, address _referrer) external nonReentrant {
+        require(_quantity > 0, "Invalid quantity");
+        require(totalSupply() + _quantity <= maxSupply, "Exceeds max supply");
+        require(_referrer != msg.sender, "Cannot refer yourself");
+        require(_referrer != address(0), "Invalid referrer");
+        
+        // Set referrer if not already set
+        if (referrers[msg.sender] == address(0)) {
+            referrers[msg.sender] = _referrer;
+        }
+        
+        // Check staking requirements if enabled
+        uint256 discountBps = 0;
+        if (requiresStaking) {
+            (uint256 stakedAmount, uint256 lockDuration) = stakingContract.getUserStakeInfo(msg.sender);
+            require(stakedAmount >= minStakeAmount, "Insufficient stake");
+            require(lockDuration >= minStakeDuration, "Insufficient lock duration");
+            
+            // Calculate discount based on stake amount
+            discountBps = getStakingDiscount(stakedAmount);
+        }
+        
+        // Add whitelist discount if applicable
+        if (whitelist[msg.sender]) {
+            discountBps += whitelistDiscountBps;
+        }
+        
+        // Add collection bonus if applicable
+        discountBps += getCollectionBonus(msg.sender);
+        
+        // Cap discount at 50%
+        if (discountBps > 5000) {
+            discountBps = 5000;
+        }
+        
+        // Calculate final price with discount
+        uint256 discountedPrice = mintPrice - ((mintPrice * discountBps) / 10000);
+        uint256 totalPrice = discountedPrice * _quantity;
+        
+        // Calculate referral reward
+        uint256 referralAmount = (totalPrice * referralRewardBps) / 10000;
+        referralRewards[_referrer] += referralAmount;
+        
+        // Transfer payment from sender
+        ikigaiToken.safeTransferFrom(msg.sender, address(this), totalPrice);
+        
+        // Process payment distribution
+        _processPayment(totalPrice - referralAmount);
+        
+        // Mint NFT
+        _safeMint(msg.sender, _quantity);
+        
+        emit ReferralRecorded(msg.sender, _referrer, referralAmount);
+    }
+    
+    /**
+     * @notice Claims referral rewards
+     */
+    function claimReferralRewards() external nonReentrant {
+        uint256 rewards = referralRewards[msg.sender];
+        require(rewards > 0, "No rewards to claim");
+        
+        referralRewards[msg.sender] = 0;
+        ikigaiToken.safeTransfer(msg.sender, rewards);
+        
+        emit ReferralRewardsClaimed(msg.sender, rewards);
+    }
+    
+    /**
+     * @notice Updates referral reward percentage
+     * @param _rewardBps New reward percentage in basis points
+     */
+    function updateReferralReward(uint256 _rewardBps) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Not admin");
+        require(_rewardBps <= 1000, "Max 10%");
+        
+        referralRewardBps = _rewardBps;
+        emit ReferralRewardUpdated(_rewardBps);
     }
 }

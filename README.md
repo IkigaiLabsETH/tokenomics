@@ -1075,3 +1075,141 @@ const GENESIS_DEPLOYMENT_CONFIG = {
   publicPrice: ethers.utils.parseEther("1.0")       // 1.0 BERA
 }
 ```
+
+# Advanced Tokenomics Features
+
+## Dynamic Tokenomics System
+
+The IKIGAI protocol implements a sophisticated tokenomics system designed for long-term sustainability, user engagement, and value accrual:
+
+### 1. Referral System with Token Incentives
+
+```solidity
+mapping(address => address) public referrers;
+mapping(address => uint256) public referralRewards;
+uint256 public referralRewardBps = 500; // 5% of mint price
+
+function mintWithReferral(uint256 _quantity, address _referrer) external {
+    // Implementation details...
+}
+```
+
+- 5% of mint price rewarded to referrers
+- Automatic tracking of referral relationships
+- Claimable rewards for community advocates
+- Creates viral growth incentives
+
+### 2. Cross-Collection NFT Synergies
+
+```solidity
+function getCollectionBonus(address _user) public view returns (uint256) {
+    uint256 collections = 0;
+    for (uint i = 0; i < registeredCollections.length; i++) {
+        if (IERC721(registeredCollections[i]).balanceOf(_user) > 0) {
+            collections++;
+        }
+    }
+    
+    uint256 bonus = collections * collectionBonusBps;
+    return bonus > maxCollectionBonus ? maxCollectionBonus : bonus;
+}
+```
+
+- 2.5% discount per additional collection owned
+- Up to 10% maximum collection bonus
+- Encourages ecosystem-wide collecting
+- Rewards dedicated community members
+
+### 3. Protocol-Owned NFT Vault
+
+```solidity
+// Revenue sharing
+uint256 public constant BUYBACK_SHARE_BPS = 2000; // 20% to buyback
+uint256 public constant TREASURY_SHARE_BPS = 8000; // 80% to treasury
+```
+
+- Protocol acquires and holds strategic NFTs
+- 20% of NFT sale revenue to buyback and burn
+- 80% to treasury for protocol development
+- Creates sustainable protocol-owned assets
+
+### 4. Governance-Weighted Staking
+
+```solidity
+function getVotingPower(address _user) external view returns (uint256) {
+    (uint256 amount, uint256 lockDuration) = getUserStakeInfo(_user);
+    // Voting power increases with stake amount and duration
+    return amount * (lockDuration / 30 days) / 4; // Max 4x multiplier
+}
+```
+
+- Voting power proportional to stake size and duration
+- Aligns governance influence with economic commitment
+- Encourages longer staking periods
+- Protects protocol from governance attacks
+
+### 5. Milestone-Based Token Unlocks
+
+```solidity
+struct Milestone {
+    string description;
+    uint256 tokenAmount;
+    bool achieved;
+    uint256 unlockTime;
+}
+```
+
+- Transparent roadmap-based token releases
+- 30-day delay between achievement and unlocking
+- Governance-controlled milestone verification
+- Aligns token release with development progress
+
+### 6. Adaptive Fee Structure
+
+```solidity
+function calculateDynamicFee(uint256 _transactionValue) public view returns (uint256) {
+    // Base fee for standard transactions
+    uint256 fee = baseFee;
+    
+    // Reduce fee for large transactions
+    if (_transactionValue > 10000e18) { // > 10,000 tokens
+        fee = fee * 90 / 100; // 10% discount
+    }
+    
+    // Further reduce for very large transactions
+    if (_transactionValue > 100000e18) { // > 100,000 tokens
+        fee = fee * 80 / 100; // Additional 20% discount
+    }
+    
+    return fee;
+}
+```
+
+- Base fee: 3% for standard transactions
+- Volume discounts for larger transactions:
+  - 10% discount for transactions > 10,000 IKIGAI
+  - Additional 20% discount for transactions > 100,000 IKIGAI
+- Minimum fee: 1%
+- Maximum fee: 5%
+
+## Tokenomics Integration Flow
+
+The advanced tokenomics features create a virtuous cycle:
+
+1. **Genesis Phase**
+   - Users mint with BERA tokens
+   - Receive vested IKIGAI rewards
+   - Refer friends for additional rewards
+
+2. **Engagement Phase**
+   - Stake IKIGAI for governance rights and discounts
+   - Collect across multiple NFT collections for bonuses
+   - Participate in milestone achievements
+
+3. **Value Accrual Phase**
+   - NFT sales drive buyback and burn
+   - Protocol acquires strategic NFTs
+   - Treasury grows through adaptive fees
+   - Token supply decreases through burns
+
+This integrated system creates multiple reinforcing loops that drive token value, user engagement, and protocol sustainability.

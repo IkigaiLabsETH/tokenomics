@@ -604,4 +604,73 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
         require(hasRole(OPERATOR_ROLE, msg.sender), "Not authorized");
         // Function logic...
     }
+
+    /**
+     * @notice Calculates optimal buyback amount based on market conditions
+     * @return Optimal buyback amount
+     */
+    function calculateOptimalBuybackAmount() public view returns (uint256) {
+        // Get current price and 30-day average
+        uint256 currentPrice = getCurrentPrice();
+        uint256 thirtyDayAvg = getThirtyDayAveragePrice();
+        
+        // Calculate price deviation
+        uint256 deviation = 0;
+        if (currentPrice < thirtyDayAvg) {
+            deviation = ((thirtyDayAvg - currentPrice) * 10000) / thirtyDayAvg;
+        }
+        
+        // Calculate buyback multiplier based on deviation
+        // Higher deviation = higher multiplier (more aggressive buyback)
+        uint256 multiplier = 10000 + (deviation * 3); // +0-30% based on deviation
+        
+        // Apply to base buyback amount
+        return (MIN_BUYBACK_AMOUNT * multiplier) / 10000;
+    }
+
+    /**
+     * @notice Gets 30-day average price
+     * @return 30-day average price
+     */
+    function getThirtyDayAveragePrice() public view returns (uint256) {
+        if (priceHistory.length == 0) return 0;
+        
+        uint256 total = 0;
+        uint256 count = 0;
+        
+        // Use up to 30 most recent prices
+        uint256 startIndex = priceHistory.length > 30 ? priceHistory.length - 30 : 0;
+        
+        for (uint256 i = startIndex; i < priceHistory.length; i++) {
+            total += priceHistory[i];
+            count++;
+        }
+        
+        return total / count;
+    }
+
+    /**
+     * @notice Executes algorithmic buyback
+     */
+    function executeAlgorithmicBuyback() external nonReentrant {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Not operator");
+        require(block.timestamp >= lastBuybackTime + BUYBACK_COOLDOWN, "Cooldown active");
+        
+        // Calculate optimal buyback amount
+        uint256 buybackAmount = calculateOptimalBuybackAmount();
+        
+        // Ensure minimum amount
+        if (buybackAmount < MIN_BUYBACK_AMOUNT) {
+            buybackAmount = MIN_BUYBACK_AMOUNT;
+        }
+        
+        // Check if we have enough stablecoin
+        uint256 stablecoinBalance = stablecoin.balanceOf(address(this));
+        if (stablecoinBalance < buybackAmount) {
+            buybackAmount = stablecoinBalance;
+        }
+        
+        // Execute buyback
+        _executeBuyback(buybackAmount);
+    }
 } 

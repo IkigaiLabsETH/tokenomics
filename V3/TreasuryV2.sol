@@ -8,12 +8,18 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/IBuybackEngine.sol";
 
+/**
+ * @title TreasuryV2
+ * @notice Manages protocol treasury with advanced tokenomics features
+ * @dev Includes milestone-based unlocks and adaptive fee structure
+ */
 contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
     using SafeERC20 for IERC20;
 
     // Roles
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant REBALANCER_ROLE = keccak256("REBALANCER_ROLE");
+    bytes32 public constant GOVERNANCE_ROLE = keccak256("GOVERNANCE_ROLE");
 
     // Token references
     IERC20 public immutable ikigaiToken;
@@ -45,6 +51,21 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
     // Add buyback engine reference
     IBuybackEngine public buybackEngine;
 
+    // Fee structure
+    uint256 public baseFee = 300; // 3%
+    uint256 public minFee = 100;  // 1%
+    uint256 public maxFee = 500;  // 5%
+    
+    // Milestone-based unlocks
+    struct Milestone {
+        string description;
+        uint256 tokenAmount;
+        bool achieved;
+        uint256 unlockTime;
+    }
+    
+    Milestone[] public milestones;
+
     // Events
     event RevenueDistributed(
         uint256 buybackAmount,
@@ -66,6 +87,12 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         uint256 adaptiveBuybackShare
     );
     event EmergencyRecovery(address indexed token, uint256 amount);
+    event FeeCollected(address indexed from, uint256 amount, uint256 fee);
+    event FeeParametersUpdated(uint256 baseFee, uint256 minFee, uint256 maxFee);
+    event MilestoneAdded(uint256 indexed index, string description, uint256 tokenAmount);
+    event MilestoneAchieved(uint256 indexed index, uint256 unlockTime);
+    event MilestoneTokensClaimed(uint256 indexed index, address recipient, uint256 amount);
+    event FundsWithdrawn(address indexed token, address indexed recipient, uint256 amount);
 
     constructor(
         address _ikigaiToken,
@@ -76,6 +103,8 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         address _liquidityPool,
         address _operationsWallet
     ) {
+        require(_ikigaiToken != address(0), "Invalid token");
+        
         ikigaiToken = IERC20(_ikigaiToken);
         stablecoin = IERC20(_stablecoin);
         stakingContract = _stakingContract;
@@ -87,6 +116,7 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         _setupRole(DEFAULT_ADMIN_ROLE, _admin);
         _setupRole(OPERATOR_ROLE, _admin);
         _setupRole(REBALANCER_ROLE, _admin);
+        _setupRole(GOVERNANCE_ROLE, _admin);
 
         lastRebalance = block.timestamp;
     }
@@ -286,5 +316,169 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         
         IERC20(token).safeTransfer(msg.sender, amount);
         emit EmergencyRecovery(token, amount);
+    }
+
+    /**
+     * @notice Collects fee with adaptive rate
+     * @param _from Address to collect from
+     * @param _amount Amount to collect fee on
+     * @return Fee amount collected
+     */
+    function collectFee(address _from, uint256 _amount) external nonReentrant returns (uint256) {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Not operator");
+        require(_amount > 0, "Zero amount");
+        
+        uint256 feeRate = calculateDynamicFee(_amount);
+        uint256 feeAmount = (_amount * feeRate) / 10000;
+        
+        // Transfer fee
+        ikigaiToken.safeTransferFrom(_from, address(this), feeAmount);
+        
+        emit FeeCollected(_from, _amount, feeAmount);
+        
+        return feeAmount;
+    }
+    
+    /**
+     * @notice Calculates dynamic fee based on transaction size
+     * @param _transactionValue Value of the transaction
+     * @return Fee rate in basis points
+     */
+    function calculateDynamicFee(uint256 _transactionValue) public view returns (uint256) {
+        // Base fee for standard transactions
+        uint256 fee = baseFee;
+        
+        // Reduce fee for large transactions
+        if (_transactionValue > 10000e18) { // > 10,000 tokens
+            fee = fee * 90 / 100; // 10% discount
+        }
+        
+        // Further reduce for very large transactions
+        if (_transactionValue > 100000e18) { // > 100,000 tokens
+            fee = fee * 80 / 100; // Additional 20% discount
+        }
+        
+        // Ensure fee is within bounds
+        if (fee < minFee) return minFee;
+        if (fee > maxFee) return maxFee;
+        
+        return fee;
+    }
+    
+    /**
+     * @notice Updates fee parameters
+     * @param _baseFee New base fee
+     * @param _minFee New minimum fee
+     * @param _maxFee New maximum fee
+     */
+    function updateFeeParameters(
+        uint256 _baseFee,
+        uint256 _minFee,
+        uint256 _maxFee
+    ) external {
+        require(hasRole(GOVERNANCE_ROLE, msg.sender), "Not governance");
+        require(_minFee <= _baseFee && _baseFee <= _maxFee, "Invalid fee range");
+        require(_maxFee <= 1000, "Max fee too high");
+        
+        baseFee = _baseFee;
+        minFee = _minFee;
+        maxFee = _maxFee;
+        
+        emit FeeParametersUpdated(_baseFee, _minFee, _maxFee);
+    }
+    
+    /**
+     * @notice Adds a new milestone
+     * @param _description Milestone description
+     * @param _tokenAmount Token amount to unlock
+     */
+    function addMilestone(string memory _description, uint256 _tokenAmount) external {
+        require(hasRole(GOVERNANCE_ROLE, msg.sender), "Not governance");
+        require(bytes(_description).length > 0, "Empty description");
+        require(_tokenAmount > 0, "Zero amount");
+        
+        milestones.push(Milestone({
+            description: _description,
+            tokenAmount: _tokenAmount,
+            achieved: false,
+            unlockTime: 0
+        }));
+        
+        emit MilestoneAdded(milestones.length - 1, _description, _tokenAmount);
+    }
+    
+    /**
+     * @notice Marks a milestone as achieved
+     * @param _index Milestone index
+     */
+    function achieveMilestone(uint256 _index) external {
+        require(hasRole(GOVERNANCE_ROLE, msg.sender), "Not governance");
+        require(_index < milestones.length, "Invalid milestone");
+        require(!milestones[_index].achieved, "Already achieved");
+        
+        milestones[_index].achieved = true;
+        milestones[_index].unlockTime = block.timestamp + 30 days; // 30-day delay
+        
+        emit MilestoneAchieved(_index, milestones[_index].unlockTime);
+    }
+    
+    /**
+     * @notice Claims tokens from an achieved milestone
+     * @param _index Milestone index
+     * @param _recipient Recipient of the tokens
+     */
+    function claimMilestoneTokens(uint256 _index, address _recipient) external nonReentrant {
+        require(hasRole(GOVERNANCE_ROLE, msg.sender), "Not governance");
+        require(_index < milestones.length, "Invalid milestone");
+        require(milestones[_index].achieved, "Not achieved");
+        require(block.timestamp >= milestones[_index].unlockTime, "Not unlocked yet");
+        require(_recipient != address(0), "Invalid recipient");
+        
+        uint256 amount = milestones[_index].tokenAmount;
+        require(ikigaiToken.balanceOf(address(this)) >= amount, "Insufficient balance");
+        
+        // Reset milestone amount to prevent double-claiming
+        milestones[_index].tokenAmount = 0;
+        
+        // Transfer tokens
+        ikigaiToken.safeTransfer(_recipient, amount);
+        
+        emit MilestoneTokensClaimed(_index, _recipient, amount);
+    }
+    
+    /**
+     * @notice Withdraws funds from treasury
+     * @param _token Token address
+     * @param _recipient Recipient address
+     * @param _amount Amount to withdraw
+     */
+    function withdrawFunds(
+        address _token,
+        address _recipient,
+        uint256 _amount
+    ) external nonReentrant {
+        require(hasRole(GOVERNANCE_ROLE, msg.sender), "Not governance");
+        require(_recipient != address(0), "Invalid recipient");
+        require(_amount > 0, "Zero amount");
+        
+        IERC20(_token).safeTransfer(_recipient, _amount);
+        
+        emit FundsWithdrawn(_token, _recipient, _amount);
+    }
+    
+    /**
+     * @notice Gets all milestones
+     * @return Array of milestones
+     */
+    function getAllMilestones() external view returns (Milestone[] memory) {
+        return milestones;
+    }
+    
+    /**
+     * @notice Gets milestone count
+     * @return Number of milestones
+     */
+    function getMilestoneCount() external view returns (uint256) {
+        return milestones.length;
     }
 } 
