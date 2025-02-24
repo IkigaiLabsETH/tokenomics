@@ -29,6 +29,27 @@ contract IkigaiV2 is ERC20, ERC20Burnable, Pausable, AccessControl {
     event BuybackEngineUpdated(address indexed newEngine);
     event TransferLimitUpdated(uint256 newLimit);
 
+    // Update transfer tax parameters
+    struct TaxTier {
+        uint256 threshold;
+        uint256 rate;
+    }
+
+    TaxTier[] public transferTaxTiers = [
+        TaxTier(100_000 * 10**18, 200),  // 2% for <100K
+        TaxTier(500_000 * 10**18, 300),  // 3% for 100K-500K
+        TaxTier(type(uint256).max, 500)  // 5% for >500K
+    ];
+
+    function getTransferTax(uint256 amount) public view returns (uint256) {
+        for (uint i = 0; i < transferTaxTiers.length; i++) {
+            if (amount <= transferTaxTiers[i].threshold) {
+                return transferTaxTiers[i].rate;
+            }
+        }
+        return transferTaxTiers[transferTaxTiers.length - 1].rate;
+    }
+
     constructor(
         address _admin,
         address _buybackEngine

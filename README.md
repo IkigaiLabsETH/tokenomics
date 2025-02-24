@@ -599,40 +599,35 @@ The Ikigai Protocol implements an advanced automated buyback system with dynamic
 ### Revenue Collection
 | Source | Allocation | Description |
 |--------|------------|-------------|
-| Trading Fees | 25% | From all trading activity |
-| NFT Sales | 30% | Primary and secondary sales |
-| Treasury Yield | 20% | From treasury investments |
-| Transfer Tax | 1% | On token transfers |
-| Staking Fees | 20% | From staking operations |
+| Trading Fees | 30% | From all trading activity |
+| NFT Sales | 35% | Primary and secondary sales |
+| Treasury Yield | 25% | From treasury investments |
+| Transfer Tax | 2-5% | Tiered based on amount |
+| Staking Fees | 25% | From staking operations |
 
-### Dynamic Pressure System
-- **Base Pressure**: 50% of accumulated funds
-- **Maximum Pressure**: 80% of accumulated funds
-- **Pressure Levels**: 6 distinct levels
-
-| Price Level | Pressure Increase | Total Pressure |
-|-------------|------------------|----------------|
-| $0.50 | +5% | 55% |
-| $0.40 | +10% | 60% |
-| $0.30 | +15% | 65% |
-| $0.20 | +20% | 70% |
-| $0.10 | +25% | 75% |
+### Distribution
+- **90% Burn Rate**: Increased burn ratio for stronger deflation
+- **10% Rewards**: Reduced rewards allocation
+- **30% Reserve**: Long-term stability buffer
+- **10% Bull Market**: Reserved for above $1.00 buybacks
 
 ### Safety Parameters
 ```solidity
 struct SafetyLimits {
-    uint256 minBuyback: 100 tokens,    // Minimum execution
-    uint256 cooldown: 24 hours,        // Between buybacks
-    uint256 slippage: 0.5%,           // Maximum allowed
-    uint256 minLiquidity: $1M,        // Required depth
+    uint256 cooldown: 12 hours,        // Reduced cooldown
+    uint256 emergencyThreshold: 20%,   // Price drop trigger
+    uint256 minLiquidity: 1%,          // Of market cap
     uint256 maxImpact: 2%,            // Per depth level
     uint256 depthRatio: 50%           // Minimum required
 }
 ```
 
-### Distribution
-- **80% Burn Rate**: Direct token burns
-- **20% Rewards**: Staking rewards pool
+### Transfer Tax Tiers
+| Amount | Tax Rate |
+|--------|----------|
+| <100K  | 2% |
+| 100K-500K | 3% |
+| >500K | 5% |
 
 ## Smart Execution
 

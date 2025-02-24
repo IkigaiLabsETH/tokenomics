@@ -34,23 +34,26 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
     uint256 public constant SLIPPAGE_TOLERANCE = 50; // 0.5%
 
     // Updated pressure system parameters
-    uint256 public constant BASE_PRESSURE = 5000;        // 50% base buyback pressure
-    uint256 public constant MAX_PRESSURE = 8000;         // 80% max buyback pressure
+    uint256 public constant BASE_PRESSURE = 4000;        // 40% base buyback pressure
+    uint256 public constant MAX_PRESSURE = 7000;         // 70% max buyback pressure
     uint256 public constant PRESSURE_INCREASE_RATE = 500; // 5% increase per level
     uint256 public constant PRESSURE_LEVELS = 6;         // Number of pressure levels
+    uint256 public constant RESERVE_RATIO = 3000;        // 30% reserve buffer
 
     // Updated revenue distribution
-    uint256 public constant NFT_SALES_BUYBACK = 3000;    // 30% of NFT sales
-    uint256 public constant PLATFORM_FEES_BUYBACK = 2500; // 25% of platform fees
-    uint256 public constant TREASURY_YIELD_BUYBACK = 2000;// 20% of treasury yield
+    uint256 public constant NFT_SALES_BUYBACK = 3500;    // 35% of NFT sales
+    uint256 public constant PLATFORM_FEES_BUYBACK = 3000; // 30% of platform fees
+    uint256 public constant TREASURY_YIELD_BUYBACK = 2500;// 25% of treasury yield
 
     // Updated distribution ratios
-    uint256 public constant BURN_RATIO = 8000;           // 80% of buybacks are burned
-    uint256 public constant REWARD_POOL_RATIO = 2000;    // 20% to rewards pool
+    uint256 public constant BURN_RATIO = 9000;           // 90% of buybacks are burned
+    uint256 public constant REWARD_POOL_RATIO = 1000;    // 10% to rewards pool
 
     // Updated safety parameters
     uint256 public constant MIN_BUYBACK_AMOUNT = 100e18; // Minimum buyback size
-    uint256 public constant BUYBACK_COOLDOWN = 1 days;   // 24 hour cooldown
+    uint256 public constant BUYBACK_COOLDOWN = 12 hours;   // 12 hour cooldown
+    uint256 public constant EMERGENCY_THRESHOLD = 2000;   // 20% price drop trigger
+    uint256 public constant MIN_LIQUIDITY_RATIO = 100;   // 1% of market cap
     uint256 public constant PRICE_DECIMALS = 8;          // Chainlink price decimals
 
     // New liquidity protection parameters
@@ -58,6 +61,10 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
     uint256 public constant MIN_LIQUIDITY_DEPTH = 1000e18; // $1M minimum depth
     uint256 public constant MAX_DEPTH_IMPACT = 200;      // 2% max impact per level
     uint256 public constant DEPTH_THRESHOLD = 5000;      // 50% minimum depth ratio
+
+    // Add bull market reserve
+    uint256 public constant BULL_MARKET_RESERVE = 1000;  // 10% for bull market buybacks
+    uint256 public constant BULL_PRICE_THRESHOLD = 1e8;  // $1.00 activation price
 
     // Revenue tracking
     struct RevenueStream {
@@ -497,5 +504,11 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
         averageImpact = totalImpact / depths.length;
         
         return (totalDepth, optimalExecutionSize, averageImpact);
+    }
+
+    // Add adaptive liquidity check
+    function getMinimumLiquidity() public view returns (uint256) {
+        uint256 marketCap = getCurrentPrice() * totalSupply();
+        return (marketCap * MIN_LIQUIDITY_RATIO) / 10000;
     }
 } 
