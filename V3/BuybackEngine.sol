@@ -102,6 +102,47 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
         uint256 baseLevel,
         uint256 currentPressure
     );
+    event EmergencyModeChanged(bool mode);
+    event TokensRecovered(address token, uint256 amount);
+    event PriceRecorded(uint256 price, uint256 timestamp);
+
+    // Add missing getPreviousPrice function
+    uint256 private lastRecordedPrice;
+    uint256 private lastPriceUpdateTime;
+
+    // Record price history for emergency detection
+    function recordPrice() public {
+        if (block.timestamp >= lastPriceUpdateTime + 1 hours) {
+            lastRecordedPrice = getCurrentPrice();
+            lastPriceUpdateTime = block.timestamp;
+        }
+    }
+
+    function getPreviousPrice() public view returns (uint256) {
+        require(lastRecordedPrice > 0, "No price history");
+        return lastRecordedPrice;
+    }
+
+    // Add circuit breaker
+    bool public emergencyMode = false;
+
+    function setEmergencyMode(bool _mode) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Not admin");
+        emergencyMode = _mode;
+        if (_mode) {
+            _pause();
+        } else {
+            _unpause();
+        }
+    }
+
+    // Add recovery function
+    function recoverTokens(address token, uint256 amount) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Not admin");
+        require(emergencyMode, "Not in emergency mode");
+        
+        IERC20(token).safeTransfer(msg.sender, amount);
+    }
 
     constructor(
         address _ikigaiToken,
@@ -156,10 +197,14 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
      * @param source Identifier for the revenue source
      * @param amount Amount of stablecoin collected
      */
-    function collectRevenue(bytes32 source, uint256 amount) external nonReentrant {
+    function collectRevenue(bytes32 source, uint256 amount) external override nonReentrant whenNotPaused {
         require(hasRole(REVENUE_SOURCE_ROLE, msg.sender), "Not authorized");
-        require(amount > 0, "Invalid amount");
-
+        require(amount > 0, "Zero amount");
+        require(source != bytes32(0), "Invalid source");
+        
+        // Record price for emergency detection
+        recordPrice();
+        
         RevenueStream storage stream = revenueStreams[source];
         uint256 buybackShare;
 
@@ -194,12 +239,22 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
     /**
      * @notice Executes buyback based on current market conditions and pressure system
      */
-    function executeBuyback() external nonReentrant {
-        require(hasRole(OPERATOR_ROLE, msg.sender), "Not authorized");
+    function executeBuyback() external nonReentrant whenNotPaused {
+        require(hasRole(OPERATOR_ROLE, msg.sender) || msg.sender == address(this), "Unauthorized");
         require(block.timestamp >= lastBuybackTime + BUYBACK_COOLDOWN, "Cooldown active");
-        require(accumulatedFunds >= MIN_BUYBACK_AMOUNT, "Insufficient funds");
-
-        _executeBuyback();
+        
+        uint256 currentPrice = getCurrentPrice();
+        bool isBullMarket = currentPrice >= BULL_PRICE_THRESHOLD;
+        
+        // Use bull market reserve if in bull market
+        if (isBullMarket) {
+            uint256 bullMarketFunds = (accumulatedFunds * BULL_MARKET_RESERVE) / 10000;
+            if (bullMarketFunds >= MIN_BUYBACK_AMOUNT) {
+                _executeBuybackWithAmount(bullMarketFunds);
+            }
+        } else {
+            _executeBuyback();
+        }
     }
 
     /**
@@ -268,7 +323,7 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
      * @notice Gets current token price from Chainlink
      */
     function getCurrentPrice() public view returns (uint256) {
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price, , , ) = priceFeed.latestRoundData();
         require(price > 0, "Invalid price");
         return uint256(price);
     }
@@ -510,5 +565,43 @@ contract BuybackEngine is IBuybackEngine, ReentrancyGuard, Pausable, AccessContr
     function getMinimumLiquidity() public view returns (uint256) {
         uint256 marketCap = getCurrentPrice() * totalSupply();
         return (marketCap * MIN_LIQUIDITY_RATIO) / 10000;
+    }
+
+    // Emergency buyback function needs to be added
+    function emergencyBuyback() external nonReentrant whenNotPaused {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not operator");
+        
+        // Get current price
+        uint256 currentPrice = getCurrentPrice();
+        uint256 previousPrice = getPreviousPrice(); // Need to implement this
+        
+        // Check if price dropped significantly
+        bool isPriceDropEmergency = previousPrice > 0 && 
+            ((previousPrice - currentPrice) * 10000 / previousPrice) >= EMERGENCY_THRESHOLD;
+        
+        require(isPriceDropEmergency, "No emergency condition");
+        
+        // Skip cooldown check for emergency
+        _executeBuyback();
+    }
+
+    // Update the liquidity check to use adaptive minimum
+    function checkLiquidity(uint256 amount) public view returns (bool) {
+        (uint256 reserve0, uint256 reserve1) = getUniswapReserves();
+        uint256 minRequired = getMinimumLiquidity();
+        
+        return reserve0 >= minRequired && 
+               calculatePriceImpact(amount) <= MAX_DEPTH_IMPACT;
+    }
+
+    // Missing function to get total supply
+    function totalSupply() public view returns (uint256) {
+        return IERC20(address(ikigaiToken)).totalSupply();
+    }
+
+    // Add reentrancy guard to all external functions
+    function updatePriceThresholds(uint256[] calldata prices, uint256[] calldata levels) external nonReentrant {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Not authorized");
+        // Function logic...
     }
 } 

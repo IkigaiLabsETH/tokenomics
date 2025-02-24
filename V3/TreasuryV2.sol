@@ -26,7 +26,7 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
     uint256 public constant MIN_LIQUIDITY = 1000 * 10**18; // 1,000 tokens
 
     // Distribution ratios (in basis points)
-    uint256 public constant BUYBACK_SHARE = 2000;   // 20% to buybacks
+    uint256 public constant BUYBACK_SHARE = 2500;   // 25% (increased from 20%)
     uint256 public constant STAKING_SHARE = 4000;   // 40% (reduced from 50%)
     uint256 public constant LIQUIDITY_SHARE = 2500; // 25% (reduced from 30%)
     uint256 public constant OPERATIONS_SHARE = 1500; // 15% unchanged
@@ -58,6 +58,14 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
         address liquidityPool,
         address operationsWallet
     );
+    event AdaptiveDistribution(
+        uint256 buybackAmount,
+        uint256 stakingAmount,
+        uint256 liquidityAmount,
+        uint256 operationsAmount,
+        uint256 adaptiveBuybackShare
+    );
+    event EmergencyRecovery(address indexed token, uint256 amount);
 
     constructor(
         address _ikigaiToken,
@@ -205,5 +213,78 @@ contract TreasuryV2 is ReentrancyGuard, Pausable, AccessControl {
             _liquidityRatio,
             lastRebalance
         );
+    }
+
+    // Add bull market reserve function
+    function allocateBullMarketReserve() external nonReentrant whenNotPaused {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not operator");
+        require(buybackEngine.getCurrentPrice() >= buybackEngine.BULL_PRICE_THRESHOLD(), "Not bull market");
+        
+        uint256 balance = ikigaiToken.balanceOf(address(this));
+        uint256 bullMarketAmount = (balance * 1000) / 10000; // 10% to bull market reserve
+        
+        if (bullMarketAmount > 0) {
+            ikigaiToken.safeApprove(address(buybackEngine), bullMarketAmount);
+            buybackEngine.collectRevenue(keccak256("BULL_MARKET_RESERVE"), bullMarketAmount);
+        }
+    }
+
+    // Add function to handle adaptive distribution based on market conditions
+    function adaptiveDistribution() external nonReentrant whenNotPaused {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not operator");
+        
+        uint256 currentPrice = buybackEngine.getCurrentPrice();
+        uint256 balance = ikigaiToken.balanceOf(address(this));
+        require(balance > 0, "No tokens to distribute");
+        
+        // Increase buyback allocation in bear market
+        uint256 adaptiveBuybackShare = BUYBACK_SHARE;
+        if (currentPrice < 0.3e8) { // Below $0.30
+            adaptiveBuybackShare = 3500; // 35%
+        } else if (currentPrice < 0.5e8) { // Below $0.50
+            adaptiveBuybackShare = 3000; // 30%
+        }
+        
+        // Adjust staking share based on buyback change
+        uint256 adjustedStakingShare = STAKING_SHARE - (adaptiveBuybackShare - BUYBACK_SHARE);
+        
+        uint256 buybackAmount = (balance * adaptiveBuybackShare) / 10000;
+        uint256 stakingAmount = (balance * adjustedStakingShare) / 10000;
+        uint256 liquidityAmount = (balance * LIQUIDITY_SHARE) / 10000;
+        uint256 operationsAmount = (balance * OPERATIONS_SHARE) / 10000;
+        
+        // Process adaptive buyback
+        if (buybackAmount > 0) {
+            ikigaiToken.safeApprove(address(buybackEngine), buybackAmount);
+            buybackEngine.collectRevenue(keccak256("ADAPTIVE_TREASURY_YIELD"), buybackAmount);
+        }
+        
+        // Transfer other shares
+        if (stakingAmount > 0) {
+            ikigaiToken.safeTransfer(stakingContract, stakingAmount);
+        }
+        if (liquidityAmount > 0) {
+            ikigaiToken.safeTransfer(liquidityPool, liquidityAmount);
+        }
+        if (operationsAmount > 0) {
+            ikigaiToken.safeTransfer(operationsWallet, operationsAmount);
+        }
+        
+        emit AdaptiveDistribution(
+            buybackAmount,
+            stakingAmount,
+            liquidityAmount,
+            operationsAmount,
+            adaptiveBuybackShare
+        );
+    }
+
+    // Add emergency token recovery
+    function emergencyTokenRecovery(address token, uint256 amount) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Must be admin");
+        require(paused(), "Contract not paused");
+        
+        IERC20(token).safeTransfer(msg.sender, amount);
+        emit EmergencyRecovery(token, amount);
     }
 } 

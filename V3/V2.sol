@@ -28,6 +28,8 @@ contract IkigaiV2 is ERC20, ERC20Burnable, Pausable, AccessControl {
     event BuybackCollected(uint256 amount);
     event BuybackEngineUpdated(address indexed newEngine);
     event TransferLimitUpdated(uint256 newLimit);
+    event FeeExemptionUpdated(address indexed account, bool exempt);
+    event EmergencyRecovery(address indexed token, uint256 amount);
 
     // Update transfer tax parameters
     struct TaxTier {
@@ -40,6 +42,9 @@ contract IkigaiV2 is ERC20, ERC20Burnable, Pausable, AccessControl {
         TaxTier(500_000 * 10**18, 300),  // 3% for 100K-500K
         TaxTier(type(uint256).max, 500)  // 5% for >500K
     ];
+
+    // Add whitelist for fee exemption
+    mapping(address => bool) public feeExempt;
 
     function getTransferTax(uint256 amount) public view returns (uint256) {
         for (uint i = 0; i < transferTaxTiers.length; i++) {
@@ -67,19 +72,30 @@ contract IkigaiV2 is ERC20, ERC20Burnable, Pausable, AccessControl {
         _mint(to, amount);
     }
 
-    // Override transfer function to include buyback logic
+    // Update transfer function to use tiered tax
     function transfer(
         address recipient, 
         uint256 amount
     ) public virtual override returns (bool) {
         require(amount <= MAX_TRANSFER, "Transfer exceeds limit");
         require(
-            block.timestamp >= lastTransferTime[msg.sender] + TRANSFER_COOLDOWN,
+            block.timestamp >= lastTransferTime[msg.sender] + TRANSFER_COOLDOWN || 
+            feeExempt[msg.sender],
             "Transfer cooldown active"
         );
 
-        // Calculate buyback amount
-        uint256 buybackAmount = (amount * BUYBACK_TAX) / 10000;
+        // Skip buyback for exempt addresses
+        if (feeExempt[msg.sender] || feeExempt[recipient]) {
+            bool success = super.transfer(recipient, amount);
+            if (success) {
+                lastTransferTime[msg.sender] = block.timestamp;
+            }
+            return success;
+        }
+
+        // Calculate buyback amount using tiered tax
+        uint256 taxRate = getTransferTax(amount);
+        uint256 buybackAmount = (amount * taxRate) / 10000;
         uint256 transferAmount = amount - buybackAmount;
 
         // Process buyback if enabled and amount is sufficient
@@ -104,7 +120,7 @@ contract IkigaiV2 is ERC20, ERC20Burnable, Pausable, AccessControl {
         return success;
     }
 
-    // Override transferFrom to include buyback logic
+    // Update transferFrom to use tiered tax
     function transferFrom(
         address sender,
         address recipient,
@@ -116,8 +132,9 @@ contract IkigaiV2 is ERC20, ERC20Burnable, Pausable, AccessControl {
             "Transfer cooldown active"
         );
 
-        // Calculate buyback amount
-        uint256 buybackAmount = (amount * BUYBACK_TAX) / 10000;
+        // Calculate buyback amount using tiered tax
+        uint256 taxRate = getTransferTax(amount);
+        uint256 buybackAmount = (amount * taxRate) / 10000;
         uint256 transferAmount = amount - buybackAmount;
 
         // Process buyback if enabled and amount is sufficient
@@ -179,5 +196,49 @@ contract IkigaiV2 is ERC20, ERC20Burnable, Pausable, AccessControl {
         bytes4 interfaceId
     ) public view override returns (bool) {
         return super.supportsInterface(interfaceId);
+    }
+
+    // Add function to update tax tiers
+    function updateTaxTiers(
+        uint256[] memory thresholds,
+        uint256[] memory rates
+    ) external {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Must be operator");
+        require(thresholds.length == rates.length, "Array length mismatch");
+        require(thresholds.length > 0, "Empty arrays");
+        
+        // Clear existing tiers
+        delete transferTaxTiers;
+        
+        // Add new tiers
+        for (uint i = 0; i < thresholds.length; i++) {
+            transferTaxTiers.push(TaxTier({
+                threshold: thresholds[i],
+                rate: rates[i]
+            }));
+        }
+    }
+
+    // Add function to update fee exemption
+    function setFeeExemption(address account, bool exempt) external {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Must be operator");
+        feeExempt[account] = exempt;
+        emit FeeExemptionUpdated(account, exempt);
+    }
+
+    // Add emergency recovery function
+    function emergencyTokenRecovery(address token, uint256 amount) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Must be admin");
+        require(paused(), "Contract not paused");
+        
+        if (token == address(this)) {
+            // For recovering own tokens
+            _transfer(address(this), msg.sender, amount);
+        } else {
+            // For recovering other tokens
+            IERC20(token).transfer(msg.sender, amount);
+        }
+        
+        emit EmergencyRecovery(token, amount);
     }
 }

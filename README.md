@@ -348,20 +348,23 @@ MIT License
 ### NFT Collections
 - **Genesis Series**
   - Mint with BERA
-  - Get IKIGAI rewards (vested)
+  - Get IKIGAI rewards (vested over 90 days with 7-day cliff)
   - Priority access for BeraChain NFT holders
   - Whitelist support with discounts
 
 - **Post-Genesis Series**
   - Mint with IKIGAI tokens
-  - 20% of mint price burned
-  - 60% to treasury
-  - 20% to staking rewards
+  - 35% to buyback (90% burned, 10% to rewards)
+  - 50% to creators
+  - 15% to treasury
   - Staking Requirements:
-    - Minimum stake amount required
-    - Lock duration requirements
-    - Tier-based discounts
-    - Whitelist benefits
+    - Minimum stake amount required (5,000 IKIGAI)
+    - Lock duration requirements (7+ days)
+    - Tier-based discounts:
+      - 5,000 IKIGAI staked = 10% off mint price
+      - 10,000 IKIGAI staked = 20% off mint price
+      - 25,000 IKIGAI staked = 30% off mint price
+    - Whitelist benefits (additional 5% discount)
 
 ### Minting Mechanics
 **Staking Discounts**:
@@ -647,20 +650,16 @@ const DEPTH_ANALYSIS = {
    - Automatic allocation tracking
    - Accumulation until threshold met
 
-2. **Buyback Trigger**
-   ```typescript
-   conditions = {
-     timePassed: > 24 hours,
-     minFunds: >= 100 tokens,
-     liquidityOK: true
-   }
-   ```
+2. **Market Analysis**
+   - Price-based pressure calculation
+   - Liquidity depth assessment
+   - Impact prediction
+   - Optimal size determination
 
-3. **Smart Execution**
-   - Dynamic pressure calculation
-   - Liquidity depth analysis
-   - Size optimization
-   - Market buy execution
+3. **Execution**
+   - Smart contract triggers
+   - Slippage protection
+   - Token purchase
    - Token distribution
 
 ## Contract Integration
@@ -668,9 +667,13 @@ const DEPTH_ANALYSIS = {
 ### Core Interfaces
 ```solidity
 interface IBuybackEngine {
-    function executeBuyback() external;
     function collectRevenue(bytes32 source, uint256 amount) external;
-    function calculatePressure(uint256 currentPrice) external view returns (uint256);
+    function executeBuyback() external;
+    function emergencyBuyback() external;
+    function calculatePressure(uint256 price) external view returns (uint256);
+    function getCurrentPrice() external view returns (uint256);
+    function BULL_PRICE_THRESHOLD() external view returns (uint256);
+    function emergencyMode() external view returns (bool);
 }
 ```
 
@@ -681,13 +684,13 @@ uint256 public constant BUYBACK_TAX = 100; // 1% tax
 uint256 public constant MIN_BUYBACK_AMOUNT = 1000e18;
 
 // StakingV2
-uint256 public constant STAKING_BUYBACK_SHARE = 2000; // 20%
+uint256 public constant STAKING_BUYBACK_SHARE = 2500; // 25%
 
 // RewardsV2
-uint256 public constant TRADING_BUYBACK_SHARE = 2500; // 25%
+uint256 public constant TRADING_BUYBACK_SHARE = 3000; // 30%
 
 // TreasuryV2
-uint256 public constant BUYBACK_SHARE = 2000; // 20%
+uint256 public constant BUYBACK_SHARE = 2500; // 25%
 ```
 
 ## Safety Features
@@ -697,12 +700,14 @@ uint256 public constant BUYBACK_SHARE = 2000; // 20%
 - Volume anomaly detection
 - Liquidity protection
 - Manual override capability
+- Emergency mode activation
 
 ### Recovery Procedures
 - System pause functionality
 - Fund recovery mechanisms
 - State reset capabilities
 - Emergency fund protection
+- Fee exemption for critical contracts
 
 ## Monitoring
 
@@ -712,6 +717,7 @@ uint256 public constant BUYBACK_SHARE = 2000; // 20%
 - Revenue stream stats
 - Liquidity depth analysis
 - Price impact measurements
+- Price history tracking
 
 ### Events
 ```solidity
@@ -727,6 +733,10 @@ event RevenueCollected(
     uint256 amount,
     uint256 buybackAllocation
 );
+
+event EmergencyModeChanged(bool mode);
+event TokensRecovered(address token, uint256 amount);
+event PriceRecorded(uint256 price, uint256 timestamp);
 ```
 
 ## Performance Optimization
@@ -742,3 +752,326 @@ event RevenueCollected(
 - Liquidity analysis
 - Impact minimization
 - Execution splitting
+- Adaptive minimum liquidity
+
+## Emergency Response
+
+### Price Drop Protection
+- 20% drop triggers emergency buyback
+- Cooldown bypass for rapid response
+- Reduced buyback share during emergencies
+- Automatic price recording
+
+### Adaptive Distribution
+- Market condition-based allocation
+- Increased buyback in bear markets
+- Bull market reserve activation
+- Dynamic tax tiers
+
+## Security Measures
+
+### Access Control
+- Role-based permissions
+- Multi-signature requirements
+- Emergency-only functions
+- Fee exemption whitelist
+
+### Token Recovery
+- Emergency token recovery
+- Protected staked tokens
+- Admin-only access
+- Paused-state requirement
+
+## Deployment Process
+
+1. Deploy BuybackEngine with price feed
+2. Deploy V2 token with tiered tax
+3. Deploy StakingV2 with fee exemption
+4. Deploy RewardsV2 with emergency distribution
+5. Deploy TreasuryV2 with adaptive allocation
+6. Configure all contracts with proper roles
+7. Whitelist critical contracts for fee exemption
+8. Set up monitoring and alerts
+
+# NFT Integration
+
+## IkigaiNFT Contract
+
+The IkigaiNFT contract extends ERC721DelayedReveal with buyback integration and revenue sharing mechanisms, creating a seamless connection between NFT sales and the protocol's tokenomics.
+
+### Revenue Distribution
+
+| Recipient | Allocation | Description |
+|-----------|------------|-------------|
+| Buyback Engine | 35% | Contributes to token burns and rewards |
+| Creator | 50% | Paid to the NFT creator or default creator |
+| Treasury | 15% | Supports protocol operations and development |
+
+### Key Features
+
+#### Revenue Collection
+```solidity
+function processPayment(uint256 _paymentAmount, uint256 _tokenId) external;
+function processBatchPayments(uint256[] calldata _paymentAmounts, uint256[] calldata _tokenIds) external;
+```
+
+- Collects payments in IKIGAI tokens
+- Automatically distributes to buyback, creators, and treasury
+- Supports both individual and batch processing
+- Emits detailed events for tracking
+
+#### Creator Management
+```solidity
+function setTokenCreator(uint256 _tokenId, address _creator) external;
+function updateDefaultCreator(address _newCreator) external;
+```
+
+- Automatic creator tracking during minting
+- Manual creator assignment for imported collections
+- Default creator fallback for unassigned tokens
+
+#### Adaptive Revenue Sharing
+```solidity
+function updateRevenueShares(
+    uint256 _buybackShare,
+    uint256 _creatorShare,
+    uint256 _treasuryShare
+) external;
+```
+
+- Adjustable revenue allocation percentages
+- Governance-controlled distribution model
+- Market-responsive revenue sharing
+
+### Integration Flow
+
+1. **NFT Sale**
+   - User purchases NFT with IKIGAI tokens
+   - Payment processed through `processPayment` function
+   - Revenue automatically split according to shares
+
+2. **Buyback Contribution**
+   - 35% of sale directed to buyback engine
+   - Contributes to `NFT_SALES` revenue stream
+   - Follows standard buyback pressure system
+
+3. **Creator Payment**
+   - 50% of sale sent to token creator
+   - Creator determined by token ownership or default
+   - Direct payment without intermediaries
+
+4. **Treasury Allocation**
+   - 15% of sale directed to treasury
+   - Supports ongoing protocol development
+   - Contributes to protocol sustainability
+
+### Security Features
+
+- ReentrancyGuard protection
+- Admin-only configuration
+- Zero-address validation
+- Emergency token recovery
+- Batch size limitations
+
+### Events
+
+```solidity
+event BuybackContribution(uint256 amount);
+event CreatorPayment(address indexed creator, uint256 amount);
+event TreasuryPayment(uint256 amount);
+event RevenueSharesUpdated(uint256 buybackShare, uint256 creatorShare, uint256 treasuryShare);
+```
+
+## Marketplace Integration
+
+The IkigaiNFT contract is designed to integrate with both on-chain and off-chain marketplaces:
+
+### On-Chain Marketplace
+- Direct payment processing
+- Automatic revenue distribution
+- Creator royalties enforcement
+- Transparent transaction history
+
+### Off-Chain Marketplace
+- API integration for payment processing
+- Webhook support for event tracking
+- Metadata synchronization
+- Cross-platform compatibility
+
+## Deployment Configuration
+
+```typescript
+const DEPLOYMENT_CONFIG = {
+  name: "Ikigai Collection",
+  symbol: "IKGNFT",
+  royaltyBps: 500, // 5% royalties
+  defaultAdmin: MULTISIG_ADDRESS,
+  buybackEngine: BUYBACK_ENGINE_ADDRESS,
+  ikigaiToken: IKIGAI_TOKEN_ADDRESS,
+  treasuryAddress: TREASURY_ADDRESS,
+  defaultCreator: CREATOR_ADDRESS
+}
+```
+
+## NFT and Token Interaction Flow
+
+The following diagram illustrates how NFT sales contribute to the token buyback and burn mechanism:
+
+```mermaid
+graph TD
+    A[Collector] -->|Buys NFT with IKIGAI tokens| B[IkigaiNFT Contract]
+    B -->|35% of payment| C[Buyback Engine]
+    B -->|50% of payment| D[NFT Creator]
+    B -->|15% of payment| E[Treasury]
+    
+    C -->|Executes buyback| F[DEX/Liquidity Pool]
+    F -->|Tokens purchased| C
+    
+    C -->|90% of purchased tokens| G[Token Burn]
+    C -->|10% of purchased tokens| H[Rewards Pool]
+    
+    G -->|Reduces supply| I[Increased Scarcity]
+    H -->|Distributed to| J[Stakers]
+    
+    I -->|Potential value increase| K[IKIGAI Token]
+    J -->|Incentivizes holding| K
+    
+    subgraph "Value Flow"
+        K -->|Used for purchases| A
+    end
+```
+
+### Process Explanation
+
+1. **Purchase**: Collectors spend IKIGAI tokens to purchase NFTs
+2. **Revenue Split**: The NFT contract distributes the payment:
+   - 35% to Buyback Engine
+   - 50% to NFT Creator
+   - 15% to Treasury
+3. **Buyback**: The Buyback Engine uses its share to purchase IKIGAI from the market
+4. **Token Allocation**: Of the tokens purchased through buyback:
+   - 90% are permanently burned
+   - 10% go to the staking rewards pool
+5. **Economic Effects**:
+   - Supply reduction through burns increases scarcity
+   - Staking rewards incentivize long-term holding
+   - Creator payments support the NFT ecosystem
+   - Treasury funding ensures protocol development
+
+This creates a virtuous cycle where NFT activity directly contributes to token value through systematic reduction in circulating supply, while maintaining incentives for all ecosystem participants.
+
+# Genesis NFT Collection
+
+## GenesisNFT Contract
+
+The GenesisNFT contract is the initial NFT collection that accepts BERA tokens for minting and rewards users with vested IKIGAI tokens, creating the foundation for the Ikigai ecosystem.
+
+### Key Features
+
+#### Tiered Pricing Structure
+- **BERA Holder Tier**: Discounted price for BeraChain NFT holders
+- **Whitelist Tier**: Standard whitelist price
+- **Public Tier**: Regular public sale price
+
+#### Phased Sale Process
+```solidity
+enum SalePhase { NotStarted, BeraHolders, Whitelist, Public, Ended }
+```
+
+- Sequential sale phases with priority access
+- Automatic price determination based on user status
+- Phase-specific access controls
+
+#### Revenue Distribution
+| Allocation | Percentage | Description |
+|------------|------------|-------------|
+| Treasury | 60% | Funds protocol development and operations |
+| Rewards | 40% | Converted to IKIGAI tokens for minters |
+
+#### Vested Rewards
+```solidity
+uint256 public constant VESTING_DURATION = 90 days;
+uint256 public constant VESTING_CLIFF = 7 days;
+```
+
+- Linear vesting schedule after cliff period
+- Automatic reward tracking per user
+- Claim function for vested tokens
+
+### Integration Flow
+
+1. **Mint Process**
+   - User pays in BERA tokens
+   - System checks whitelist status and determines price
+   - NFT is minted to user
+   - BERA payment is split between treasury and rewards
+
+2. **Reward Conversion**
+   - 40% of BERA payment is converted to IKIGAI rewards
+   - Conversion rate determined by protocol parameters
+   - Rewards are recorded for vesting
+
+3. **Vesting Schedule**
+   - 7-day cliff before rewards begin vesting
+   - Linear vesting over 90 days total
+   - Users can claim vested tokens at any time
+
+### Whitelist Management
+```solidity
+function updateWhitelist(
+    address[] calldata _users,
+    bool[] calldata _beraHolderStatus,
+    bool[] calldata _generalStatus
+) external;
+```
+
+- Batch whitelist updates for efficiency
+- Separate tracking for BERA holders and general whitelist
+- Priority pricing for BERA holders
+
+### Security Features
+- ReentrancyGuard protection
+- Role-based access control
+- Protected reward tokens
+- Emergency recovery functions
+
+## Genesis to Regular NFT Transition
+
+The protocol implements a two-phase NFT strategy:
+
+1. **Genesis Phase**
+   - Mint with BERA tokens
+   - Receive vested IKIGAI rewards
+   - Priority access for BeraChain NFT holders
+   - Limited collection size
+
+2. **Regular Phase**
+   - Mint with IKIGAI tokens
+   - 35% to buyback (90% burned, 10% to rewards)
+   - 50% to creators
+   - 15% to treasury
+   - Unlimited collections
+
+This transition creates a virtuous cycle where:
+- Initial minters are rewarded with IKIGAI tokens
+- These tokens can be used for future NFT mints
+- A portion of these tokens are then burned through the buyback system
+- The resulting token scarcity benefits early participants
+
+## Deployment Configuration
+
+```typescript
+const GENESIS_DEPLOYMENT_CONFIG = {
+  name: "Ikigai Genesis Collection",
+  symbol: "IKGGEN",
+  royaltyBps: 500, // 5% royalties
+  defaultAdmin: MULTISIG_ADDRESS,
+  beraToken: BERA_TOKEN_ADDRESS,
+  ikigaiToken: IKIGAI_TOKEN_ADDRESS,
+  treasuryAddress: TREASURY_ADDRESS,
+  buybackEngine: BUYBACK_ENGINE_ADDRESS,
+  beraHolderPrice: ethers.utils.parseEther("0.5"),  // 0.5 BERA
+  whitelistPrice: ethers.utils.parseEther("0.75"),  // 0.75 BERA
+  publicPrice: ethers.utils.parseEther("1.0")       // 1.0 BERA
+}
+```

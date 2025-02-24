@@ -159,4 +159,34 @@ interface IStakingV2 {
     function MAX_LOCK_PERIOD() external pure returns (uint256);
     function WEEKLY_BONUS() external pure returns (uint256);
     function BASE_RATE() external pure returns (uint256);
+
+    /**
+     * @notice Gets user staking information
+     * @param _user User address
+     * @return stakedAmount Amount staked
+     * @return lockDuration Lock duration in seconds
+     */
+    function getUserStakeInfo(address _user) external view returns (uint256 stakedAmount, uint256 lockDuration);
+    
+    /**
+     * @notice Checks if user is eligible for a specific tier
+     * @param _user User address
+     * @param _tier Tier level
+     * @return isEligible Whether user is eligible
+     */
+    function isEligibleForTier(address _user, uint256 _tier) external view returns (bool isEligible);
+
+    /**
+     * @notice Gets user's voting power based on stake amount and duration
+     * @param _user User address
+     * @return votingPower Voting power in basis points
+     */
+    function getVotingPower(address _user) external view returns (uint256 votingPower);
+
+    /**
+     * @notice Gets user's APY based on tier and lock duration
+     * @param _user User address
+     * @return apy Annual percentage yield in basis points
+     */
+    function getUserAPY(address _user) external view returns (uint256 apy);
 } 

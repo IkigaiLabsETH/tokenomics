@@ -51,7 +51,7 @@ contract RewardsV2 is ReentrancyGuard, Pausable, AccessControl {
     IBuybackEngine public buybackEngine;
     
     // Add buyback configuration
-    uint256 public constant TRADING_BUYBACK_SHARE = 2500; // 25% of trading fees to buyback
+    uint256 public constant TRADING_BUYBACK_SHARE = 3000; // 30% of trading fees to buyback
 
     struct UserStats {
         uint256 lastTradeTime;
@@ -87,6 +87,8 @@ contract RewardsV2 is ReentrancyGuard, Pausable, AccessControl {
         address indexed referrer,
         address indexed referred
     );
+    event EmergencyRewardPaid(address indexed trader, uint256 amount);
+    event EmergencyRecovery(address indexed token, uint256 amount);
 
     constructor(
         address _ikigaiToken,
@@ -234,5 +236,58 @@ contract RewardsV2 is ReentrancyGuard, Pausable, AccessControl {
     function unpause() external {
         require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not operator");
         _unpause();
+    }
+
+    // Add function to handle emergency rewards
+    function emergencyRewardDistribution(
+        address[] calldata traders,
+        uint256[] calldata amounts
+    ) external nonReentrant {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not operator");
+        require(traders.length == amounts.length, "Array length mismatch");
+        require(traders.length <= 100, "Batch too large"); // Prevent gas limit issues
+        
+        uint256 totalRewards = 0;
+        for (uint i = 0; i < traders.length; i++) {
+            require(traders[i] != address(0), "Invalid address");
+            require(amounts[i] > 0, "Invalid amount");
+            
+            // Calculate total rewards to ensure we have enough balance
+            totalRewards += calculateReward(amounts[i]);
+        }
+        
+        require(ikigaiToken.balanceOf(address(this)) >= totalRewards, "Insufficient balance");
+        
+        // Process rewards
+        for (uint i = 0; i < traders.length; i++) {
+            // Process with reduced buyback
+            uint256 reducedBuybackShare = TRADING_BUYBACK_SHARE / 2;
+            uint256 buybackAmount = (amounts[i] * reducedBuybackShare) / 10000;
+            
+            if (buybackAmount > 0) {
+                ikigaiToken.safeApprove(address(buybackEngine), buybackAmount);
+                buybackEngine.collectRevenue(keccak256("EMERGENCY_TRADING_FEES"), buybackAmount);
+            }
+            
+            uint256 rewardAmount = calculateReward(amounts[i]);
+            ikigaiToken.safeTransfer(traders[i], rewardAmount);
+            
+            emit EmergencyRewardPaid(traders[i], rewardAmount);
+        }
+    }
+
+    // Add missing calculateReward function
+    function calculateReward(uint256 tradeAmount) public view returns (uint256) {
+        uint256 baseReward = (tradeAmount * getRewardTier(tradeAmount)) / 10000;
+        return baseReward;
+    }
+
+    // Add emergency token recovery
+    function emergencyTokenRecovery(address token, uint256 amount) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Must be admin");
+        require(paused(), "Contract not paused");
+        
+        IERC20(token).safeTransfer(msg.sender, amount);
+        emit EmergencyRecovery(token, amount);
     }
 } 

@@ -39,7 +39,10 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
     IBuybackEngine public buybackEngine;
 
     // Add buyback configuration
-    uint256 public constant STAKING_BUYBACK_SHARE = 2000; // 20% of staking fees to buyback
+    uint256 public constant STAKING_BUYBACK_SHARE = 2500; // 25% (increased from 20%)
+
+    // Add whitelist for fee exemption
+    mapping(address => bool) public feeExempt;
 
     struct Stake {
         uint256 amount;
@@ -61,6 +64,8 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
     event Unstaked(address indexed user, uint256 amount, uint256 rewards);
     event RewardsClaimed(address indexed user, uint256 amount);
     event TierUpgraded(address indexed user, uint256 oldTier, uint256 newTier);
+    event FeeExemptionUpdated(address indexed account, bool exempt);
+    event EmergencyRecovery(address indexed token, uint256 amount);
 
     constructor(
         address _ikigaiToken,
@@ -98,6 +103,7 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
     // Stake tokens
     function stake(uint256 amount, uint256 lockPeriod) external nonReentrant whenNotPaused {
         require(amount > 0, "Cannot stake 0");
+        require(amount <= ikigaiToken.balanceOf(msg.sender), "Insufficient balance");
         require(lockPeriod >= MIN_LOCK_PERIOD, "Lock period too short");
         require(lockPeriod <= MAX_LOCK_PERIOD, "Lock period too long");
 
@@ -117,11 +123,13 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
 
         totalStaked += amount;
         
-        // Calculate and send buyback allocation
-        uint256 buybackAmount = (amount * STAKING_BUYBACK_SHARE) / 10000;
-        if (buybackAmount > 0) {
-            ikigaiToken.safeApprove(address(buybackEngine), buybackAmount);
-            buybackEngine.collectRevenue(keccak256("STAKING_FEES"), buybackAmount);
+        // Calculate and send buyback allocation (skip for exempt addresses)
+        if (!feeExempt[msg.sender]) {
+            uint256 buybackAmount = (amount * STAKING_BUYBACK_SHARE) / 10000;
+            if (buybackAmount > 0) {
+                ikigaiToken.safeApprove(address(buybackEngine), buybackAmount);
+                buybackEngine.collectRevenue(keccak256("STAKING_FEES"), buybackAmount);
+            }
         }
 
         emit Staked(msg.sender, amount, lockPeriod);
@@ -213,5 +221,24 @@ contract StakingV2 is ReentrancyGuard, Pausable, AccessControl {
 
         ikigaiToken.safeTransfer(msg.sender, amount);
         emit Unstaked(msg.sender, amount, 0);
+    }
+
+    // Function to update fee exemption
+    function setFeeExemption(address account, bool exempt) external nonReentrant {
+        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not operator");
+        feeExempt[account] = exempt;
+        emit FeeExemptionUpdated(account, exempt);
+    }
+
+    // Add emergency token recovery
+    function emergencyTokenRecovery(address token, uint256 amount) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Must be admin");
+        require(paused(), "Contract not paused");
+        require(token != address(ikigaiToken) || 
+                IERC20(token).balanceOf(address(this)) > totalStaked, 
+                "Cannot withdraw staked tokens");
+        
+        IERC20(token).safeTransfer(msg.sender, amount);
+        emit EmergencyRecovery(token, amount);
     }
 } 
