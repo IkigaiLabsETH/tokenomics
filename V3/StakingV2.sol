@@ -27,7 +27,7 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
     uint256 public constant TIER1_THRESHOLD = 1_000 * 10**18; // 1,000 IKIGAI
     uint256 public constant TIER2_THRESHOLD = 5_000 * 10**18; // 5,000 IKIGAI
     uint256 public constant TIER3_THRESHOLD = 15_000 * 10**18; // 15,000 IKIGAI
-    uint256 public constant TIER0_THRESHOLD = 1000 * 1e18;   // 1,000 IKIGAI
+    uint256 public constant TIER0_THRESHOLD = 1000 * 10**18;   // 1,000 IKIGAI (entry tier)
 
     // Tier discounts (in basis points, 100 = 1%)
     uint256 public constant TIER1_DISCOUNT = 500;  // 5%
@@ -37,11 +37,11 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
 
     // Lock periods
     uint256 public constant MIN_LOCK_PERIOD = 7 days;
-    uint256 public constant MAX_LOCK_PERIOD = 28 days;
-    uint256 public constant WEEKLY_BONUS = 500; // 5% per week
+    uint256 public constant MAX_LOCK_PERIOD = 365 days; // Increased from 28 days
+    uint256 public constant WEEKLY_BONUS = 50; // 0.5% per week
 
     // Base staking rate (in basis points)
-    uint256 public constant BASE_RATE = 200; // 2%
+    uint256 public constant BASE_RATE = 1500; // 15%
 
     // Add buyback engine reference
     IBuybackEngine public buybackEngine;
@@ -60,200 +60,130 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
     struct Stake {
         uint256 amount;
         uint256 startTime;
+        uint256 endTime;
+        uint256 lastClaimTime;
         uint256 lockPeriod;
         uint256 tier;
-        uint256 rewards;
         bool active;
     }
 
-    // Staker info
-    mapping(address => Stake) public stakes;
-    
-    // Total staked amount
+    // Stake storage
+    mapping(uint256 => Stake) public stakes;
+    mapping(uint256 => address) public stakeOwner;
+    mapping(address => uint256[]) public userStakeIds;
+    uint256 public nextStakeId = 1;
+
+    // Rewards tracking
+    mapping(address => uint256) public pendingRewards;
     uint256 public totalStaked;
+    uint256 public totalRewardsDistributed;
 
     // Events
-    event Staked(address indexed user, uint256 amount, uint256 lockPeriod);
-    event Unstaked(address indexed user, uint256 amount, uint256 rewards);
+    event Staked(address indexed user, uint256 indexed stakeId, uint256 amount, uint256 lockPeriod);
+    event Unstaked(address indexed user, uint256 indexed stakeId, uint256 amount);
     event RewardsClaimed(address indexed user, uint256 amount);
-    event TierUpgraded(address indexed user, uint256 oldTier, uint256 newTier);
-    event FeeExemptionUpdated(address indexed account, bool exempt);
-    event EmergencyRecovery(address indexed token, uint256 amount);
-    event StakesCombined(address indexed user, uint256 newStakeId, uint256[] stakeIds);
+    event StakeCombined(address indexed user, uint256[] oldStakeIds, uint256 newStakeId);
+    event StakeSplit(address indexed user, uint256 oldStakeId, uint256[] newStakeIds);
 
-    constructor(
-        address _ikigaiToken,
-        address _buybackEngine,
-        address _admin
-    ) {
+    constructor(address _ikigaiToken, address _buybackEngine) {
+        require(_ikigaiToken != address(0), "Invalid token");
+        require(_buybackEngine != address(0), "Invalid buyback engine");
+        
         ikigaiToken = IERC20(_ikigaiToken);
         buybackEngine = IBuybackEngine(_buybackEngine);
-        _setupRole(DEFAULT_ADMIN_ROLE, _admin);
-        _setupRole(OPERATOR_ROLE, _admin);
-    }
-
-    // Get user's tier based on stake amount
-    function getUserTier(uint256 amount) public pure returns (uint256) {
-        if (amount >= TIER3_THRESHOLD) return 3;
-        if (amount >= TIER2_THRESHOLD) return 2;
-        if (amount >= TIER1_THRESHOLD) return 1;
-        return 0;
-    }
-
-    // Calculate lock period multiplier
-    function getLockMultiplier(uint256 lockPeriod) public pure returns (uint256) {
-        uint256 weeks = lockPeriod / 1 weeks;
-        return 10000 + (weeks * WEEKLY_BONUS); // Base 100% + weekly bonus
-    }
-
-    // Calculate tier multiplier
-    function getTierMultiplier(uint256 tier) public pure returns (uint256) {
-        if (tier == 3) return 10000 + TIER3_DISCOUNT;
-        if (tier == 2) return 10000 + TIER2_DISCOUNT;
-        if (tier == 1) return 10000 + TIER1_DISCOUNT;
-        return 10000;
-    }
-
-    // Stake tokens
-    function stake(uint256 amount, uint256 lockPeriod) external nonReentrant whenNotPaused {
-        require(amount > 0, "Cannot stake 0");
-        require(amount <= ikigaiToken.balanceOf(msg.sender), "Insufficient balance");
-        require(lockPeriod >= MIN_LOCK_PERIOD, "Lock period too short");
-        require(lockPeriod <= MAX_LOCK_PERIOD, "Lock period too long");
-
-        Stake storage userStake = stakes[msg.sender];
-        require(!userStake.active, "Already staking");
-
-        uint256 tier = getUserTier(amount);
         
-        ikigaiToken.safeTransferFrom(msg.sender, address(this), amount);
-        
-        userStake.amount = amount;
-        userStake.startTime = block.timestamp;
-        userStake.lockPeriod = lockPeriod;
-        userStake.tier = tier;
-        userStake.active = true;
-        userStake.rewards = 0;
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(OPERATOR_ROLE, msg.sender);
+    }
 
-        totalStaked += amount;
+    /**
+     * @notice Stakes tokens for rewards
+     * @param _amount Amount to stake
+     * @param _lockPeriod Lock period in seconds
+     */
+    function stake(uint256 _amount, uint256 _lockPeriod) external nonReentrant whenNotPaused {
+        require(_amount > 0, "Zero amount");
+        require(_lockPeriod >= MIN_LOCK_PERIOD, "Lock period too short");
+        require(_lockPeriod <= MAX_LOCK_PERIOD, "Lock period too long");
         
-        // Calculate and send buyback allocation (skip for exempt addresses)
-        if (!feeExempt[msg.sender]) {
-            uint256 buybackAmount = (amount * STAKING_BUYBACK_SHARE) / 10000;
-            if (buybackAmount > 0) {
-                ikigaiToken.safeApprove(address(buybackEngine), buybackAmount);
-                buybackEngine.collectRevenue(keccak256("STAKING_FEES"), buybackAmount);
-            }
+        // Transfer tokens from user
+        ikigaiToken.safeTransferFrom(msg.sender, address(this), _amount);
+        
+        // Determine tier based on amount
+        uint256 tier = 0;
+        if (_amount >= TIER3_THRESHOLD) {
+            tier = 3;
+        } else if (_amount >= TIER2_THRESHOLD) {
+            tier = 2;
+        } else if (_amount >= TIER1_THRESHOLD) {
+            tier = 1;
         }
-
-        emit Staked(msg.sender, amount, lockPeriod);
-        if (tier > 0) {
-            emit TierUpgraded(msg.sender, 0, tier);
+        
+        // Create stake
+        uint256 stakeId = nextStakeId++;
+        stakes[stakeId] = Stake({
+            amount: _amount,
+            startTime: block.timestamp,
+            endTime: block.timestamp + _lockPeriod,
+            lastClaimTime: block.timestamp,
+            lockPeriod: _lockPeriod,
+            tier: tier,
+            active: true
+        });
+        
+        stakeOwner[stakeId] = msg.sender;
+        userStakeIds[msg.sender].push(stakeId);
+        totalStaked += _amount;
+        
+        // Track first stake time for loyalty bonus
+        if (userFirstStakeTime[msg.sender] == 0) {
+            userFirstStakeTime[msg.sender] = block.timestamp;
         }
+        
+        emit Staked(msg.sender, stakeId, _amount, _lockPeriod);
     }
 
-    // Calculate rewards for a stake
-    function calculateRewards(Stake memory _stake) public view returns (uint256) {
-        if (!_stake.active) return 0;
+    /**
+     * @notice Unstakes tokens after lock period
+     * @param _stakeId Stake ID to unstake
+     */
+    function unstake(uint256 _stakeId) external nonReentrant {
+        require(stakeOwner[_stakeId] == msg.sender, "Not owner");
         
-        uint256 timeStaked = block.timestamp - _stake.startTime;
-        if (timeStaked > _stake.lockPeriod) {
-            timeStaked = _stake.lockPeriod;
-        }
-
-        uint256 baseReward = (_stake.amount * BASE_RATE * timeStaked) / (365 days * 10000);
-        uint256 tierMultiplier = getTierMultiplier(_stake.tier);
-        uint256 lockMultiplier = getLockMultiplier(_stake.lockPeriod);
+        Stake storage userStake = stakes[_stakeId];
+        require(userStake.active, "Not active");
+        require(block.timestamp >= userStake.endTime, "Still locked");
         
-        return (baseReward * tierMultiplier * lockMultiplier) / (10000 * 10000);
-    }
-
-    // Unstake tokens and claim rewards
-    function unstake() external nonReentrant {
-        Stake storage userStake = stakes[msg.sender];
-        require(userStake.active, "No active stake");
-        require(block.timestamp >= userStake.startTime + userStake.lockPeriod, "Lock period not ended");
-
-        uint256 rewards = calculateRewards(userStake);
-        uint256 amount = userStake.amount;
-
-        userStake.active = false;
-        totalStaked -= amount;
-
-        // Transfer staked tokens back
-        ikigaiToken.safeTransfer(msg.sender, amount);
-        
-        // Transfer rewards if any
+        // Calculate rewards
+        uint256 rewards = calculateRewards(_stakeId);
         if (rewards > 0) {
-            ikigaiToken.safeTransfer(msg.sender, rewards);
-            emit RewardsClaimed(msg.sender, rewards);
+            pendingRewards[msg.sender] += rewards;
         }
-
-        emit Unstaked(msg.sender, amount, rewards);
-    }
-
-    // View functions
-    function getStakeInfo(address user) external view returns (
-        uint256 amount,
-        uint256 startTime,
-        uint256 lockPeriod,
-        uint256 tier,
-        uint256 rewards,
-        bool active
-    ) {
-        Stake memory stake = stakes[user];
-        return (
-            stake.amount,
-            stake.startTime,
-            stake.lockPeriod,
-            stake.tier,
-            calculateRewards(stake),
-            stake.active
-        );
-    }
-
-    // Emergency functions
-    function pause() external {
-        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not an operator");
-        _pause();
-    }
-
-    function unpause() external {
-        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not an operator");
-        _unpause();
-    }
-
-    // Emergency withdraw
-    function emergencyWithdraw() external nonReentrant {
-        require(paused(), "Contract not paused");
-        Stake storage userStake = stakes[msg.sender];
-        require(userStake.active, "No active stake");
-
-        uint256 amount = userStake.amount;
-        userStake.active = false;
-        totalStaked -= amount;
-
-        ikigaiToken.safeTransfer(msg.sender, amount);
-        emit Unstaked(msg.sender, amount, 0);
-    }
-
-    // Function to update fee exemption
-    function setFeeExemption(address account, bool exempt) external nonReentrant {
-        require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not operator");
-        feeExempt[account] = exempt;
-        emit FeeExemptionUpdated(account, exempt);
-    }
-
-    // Add emergency token recovery
-    function emergencyTokenRecovery(address token, uint256 amount) external {
-        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Must be admin");
-        require(paused(), "Contract not paused");
-        require(token != address(ikigaiToken) || 
-                IERC20(token).balanceOf(address(this)) > totalStaked, 
-                "Cannot withdraw staked tokens");
         
-        IERC20(token).safeTransfer(msg.sender, amount);
-        emit EmergencyRecovery(token, amount);
+        // Update state
+        userStake.active = false;
+        totalStaked -= userStake.amount;
+        
+        // Transfer tokens back to user
+        ikigaiToken.safeTransfer(msg.sender, userStake.amount);
+        
+        emit Unstaked(msg.sender, _stakeId, userStake.amount);
+    }
+
+    /**
+     * @notice Claims pending rewards
+     */
+    function claimRewards() external nonReentrant {
+        uint256 rewards = pendingRewards[msg.sender];
+        require(rewards > 0, "No rewards");
+        
+        pendingRewards[msg.sender] = 0;
+        totalRewardsDistributed += rewards;
+        
+        // Transfer rewards to user
+        ikigaiToken.safeTransfer(msg.sender, rewards);
+        
+        emit RewardsClaimed(msg.sender, rewards);
     }
 
     /**
@@ -268,14 +198,25 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
         uint256 weightedLockPeriod = 0;
         uint256 historicalCommitment = 0;
         
+        // Verify ownership and calculate combined properties
         for (uint256 i = 0; i < _stakeIds.length; i++) {
-            Stake storage userStake = stakes[_stakeIds[i]];
+            uint256 stakeId = _stakeIds[i];
+            require(stakeOwner[stakeId] == msg.sender, "Not owner of all stakes");
+            
+            Stake storage userStake = stakes[stakeId];
+            require(userStake.active, "Stake not active");
             
             // Calculate time already staked
             uint256 timeStaked = block.timestamp - userStake.startTime;
             
             // Add historical commitment bonus (5% of time already staked)
             historicalCommitment += (timeStaked * userStake.amount * 5) / 100;
+            
+            // Add rewards to pending rewards
+            uint256 rewards = calculateRewards(stakeId);
+            if (rewards > 0) {
+                pendingRewards[msg.sender] += rewards;
+            }
             
             // Calculate weighted lock period
             weightedLockPeriod += userStake.amount * userStake.lockPeriod;
@@ -290,41 +231,114 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
         
         // Close original stakes
         for (uint256 i = 0; i < _stakeIds.length; i++) {
-            _closeStake(_stakeIds[i]);
+            stakes[_stakeIds[i]].active = false;
+            totalStaked -= stakes[_stakeIds[i]].amount;
         }
         
-        emit StakesCombined(msg.sender, newStakeId, _stakeIds);
+        emit StakeCombined(msg.sender, _stakeIds, newStakeId);
         
         return newStakeId;
     }
 
     /**
-     * @notice Closes a stake without transferring tokens
-     * @param _stakeId Stake ID to close
+     * @notice Creates a new stake
+     * @param _amount Amount to stake
+     * @param _lockPeriod Lock period in seconds
+     * @return New stake ID
      */
-    function _closeStake(uint256 _stakeId) internal {
+    function _createStake(uint256 _amount, uint256 _lockPeriod) internal returns (uint256) {
+        // Determine tier based on amount
+        uint256 tier = 0;
+        if (_amount >= TIER3_THRESHOLD) {
+            tier = 3;
+        } else if (_amount >= TIER2_THRESHOLD) {
+            tier = 2;
+        } else if (_amount >= TIER1_THRESHOLD) {
+            tier = 1;
+        }
+        
+        // Create stake
+        uint256 stakeId = nextStakeId++;
+        stakes[stakeId] = Stake({
+            amount: _amount,
+            startTime: block.timestamp,
+            endTime: block.timestamp + _lockPeriod,
+            lastClaimTime: block.timestamp,
+            lockPeriod: _lockPeriod,
+            tier: tier,
+            active: true
+        });
+        
+        stakeOwner[stakeId] = msg.sender;
+        userStakeIds[msg.sender].push(stakeId);
+        totalStaked += _amount;
+        
+        return stakeId;
+    }
+
+    /**
+     * @notice Calculates rewards for a stake
+     * @param _stakeId Stake ID
+     * @return Rewards amount
+     */
+    function calculateRewards(uint256 _stakeId) public view returns (uint256) {
         Stake storage userStake = stakes[_stakeId];
-        userStake.active = false;
+        if (!userStake.active) return 0;
+        
+        uint256 timeElapsed = block.timestamp - userStake.lastClaimTime;
+        if (timeElapsed == 0) return 0;
+        
+        // Calculate APY based on tier and lock period
+        uint256 apy = BASE_RATE;
+        
+        // Add tier bonus
+        if (userStake.amount >= TIER0_THRESHOLD && userStake.amount < TIER1_THRESHOLD) {
+            apy += TIER0_DISCOUNT;
+        } else if (userStake.tier == 1) {
+            apy += TIER1_DISCOUNT;
+        } else if (userStake.tier == 2) {
+            apy += TIER2_DISCOUNT;
+        } else if (userStake.tier == 3) {
+            apy += TIER3_DISCOUNT;
+        }
+        
+        // Add lock period bonus
+        uint256 weeklyBonus = (userStake.lockPeriod / 1 weeks) * WEEKLY_BONUS;
+        apy += weeklyBonus;
+        
+        // Add loyalty bonus
+        address owner = stakeOwner[_stakeId];
+        if (userFirstStakeTime[owner] > 0) {
+            uint256 yearsStaking = (block.timestamp - userFirstStakeTime[owner]) / 365 days;
+            uint256 loyaltyBonus = yearsStaking * LOYALTY_APY_BONUS_PER_YEAR;
+            if (loyaltyBonus > MAX_LOYALTY_APY_BONUS) {
+                loyaltyBonus = MAX_LOYALTY_APY_BONUS;
+            }
+            apy += loyaltyBonus;
+        }
+        
+        // Calculate rewards
+        uint256 rewards = (userStake.amount * apy * timeElapsed) / (10000 * 365 days);
+        
+        return rewards;
     }
 
     /**
      * @notice Gets user's voting power based on stake amount and duration
      * @param _user User address
-     * @return votingPower Voting power in basis points
+     * @return Voting power
      */
-    function getVotingPower(address _user) external view override returns (uint256 votingPower) {
+    function getVotingPower(address _user) external view override returns (uint256) {
         uint256[] memory userStakes = userStakeIds[_user];
-        if (userStakes.length == 0) return 0;
-        
         uint256 totalVotingPower = 0;
         
         for (uint256 i = 0; i < userStakes.length; i++) {
             Stake storage userStake = stakes[userStakes[i]];
             if (userStake.active) {
-                // Voting power = amount * (lockDuration / 30 days) / 4
-                // This gives a max 4x multiplier for 120-day locks
+                // Voting power increases with stake amount and duration
                 uint256 durationMultiplier = userStake.lockPeriod / 30 days;
                 if (durationMultiplier > 4) durationMultiplier = 4;
+                if (durationMultiplier == 0) durationMultiplier = 1;
                 
                 totalVotingPower += userStake.amount * durationMultiplier / 4;
             }
@@ -353,11 +367,11 @@ contract StakingV2 is IStakingV2, ReentrancyGuard, Pausable, AccessControl {
                 if (userStake.amount >= TIER0_THRESHOLD && userStake.amount < TIER1_THRESHOLD) {
                     baseApy = BASE_RATE + TIER0_DISCOUNT;
                 } else if (userStake.tier == 1) {
-                    baseApy = BASE_RATE + 500; // +5%
+                    baseApy = BASE_RATE + TIER1_DISCOUNT;
                 } else if (userStake.tier == 2) {
-                    baseApy = BASE_RATE + 1000; // +10%
+                    baseApy = BASE_RATE + TIER2_DISCOUNT;
                 } else if (userStake.tier == 3) {
-                    baseApy = BASE_RATE + 1500; // +15%
+                    baseApy = BASE_RATE + TIER3_DISCOUNT;
                 }
                 
                 // Calculate lock duration bonus
