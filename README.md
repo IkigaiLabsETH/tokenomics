@@ -1,6 +1,270 @@
-# Ikigai Protocol
+# IKIGAI Protocol
 
-A comprehensive NFT marketplace and reward system on BeraChain, featuring dynamic rewards, trading incentives, and automated liquidity management.
+```
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ██╗██╗  ██╗██╗ ██████╗  █████╗ ██╗                          │
+│   ██║██║ ██╔╝██║██╔════╝ ██╔══██╗██║                          │
+│   ██║█████╔╝ ██║██║  ███╗███████║██║                          │
+│   ██║██╔═██╗ ██║██║   ██║██╔══██║██║                          │
+│   ██║██║  ██╗██║╚██████╔╝██║  ██║██║                          │
+│   ╚═╝╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝                          │
+│                                                               │
+│   Advanced NFT & DeFi Protocol with Sustainable Tokenomics    │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+## Overview
+
+IKIGAI is an advanced NFT and DeFi protocol built on Berachain, featuring sustainable tokenomics, composable staking, and dynamic buyback mechanisms. The protocol is designed to create long-term value for participants through innovative economic incentives and governance.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   IKIGAI PROTOCOL OVERVIEW                     │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │    NFT      │         │  Tokenomics │         │  DeFi   │ │
+│   │  Ecosystem  │◄───────►│    Engine   │◄───────►│ Suite   │ │
+│   └──────┬──────┘         └──────┬──────┘         └────┬────┘ │
+│          │                       │                     │      │
+│          ▼                       ▼                     ▼      │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │  Genesis    │         │  Adaptive   │         │ Staking │ │
+│   │ Collection  │         │  Emissions  │         │ System  │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │   AI Art    │         │   Buyback   │         │Treasury │ │
+│   │   Series    │         │   Engine    │         │ Vault   │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+## Key Features
+
+### 1. Advanced NFT Ecosystem
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   NFT ECOSYSTEM COMPONENTS                     │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │  Genesis    │         │   AI Art    │         │ Dynamic │ │
+│   │ Collection  │         │   Series    │         │ Pricing │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │ Collection  │         │   Tiered    │         │ Loyalty │ │
+│   │ Synergies   │         │  Referrals  │         │ Rewards │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+- **Genesis Collection**: Limited-edition NFTs minted with BERA tokens
+- **AI Art Series**: Exclusive collections minted with IKIGAI tokens
+- **Collection Synergies**: Bonuses for holding multiple collections
+- **Tiered Referrals**: Progressive rewards for community advocates
+- **Dynamic Pricing**: Market-responsive pricing mechanisms
+- **Loyalty Rewards**: Benefits for long-term collectors
+
+### 2. Sustainable Tokenomics
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   TOKENOMICS ARCHITECTURE                      │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │   Value     │         │    Value    │         │  Value  │ │
+│   │ Generation  │────────►│   Capture   │────────►│ Accrual │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │ Multi-Time  │         │  Variable   │         │ Loyalty │ │
+│   │  Buybacks   │         │   Unlocks   │         │   Fees  │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+- **Adaptive Emissions**: Adjusts based on market conditions
+- **Multi-Timeframe Buybacks**: Intelligent price support
+- **Variable Token Unlocks**: Prevents market flooding
+- **Loyalty-Based Fee Structure**: Rewards long-term users
+- **Dynamic Treasury Allocation**: Optimizes resource utilization
+- **Burn Mechanisms**: Sustainable deflationary pressure
+
+### 3. Composable Staking System
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   COMPOSABLE STAKING SYSTEM                    │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │   Tiered    │         │  Duration   │         │ Loyalty │ │
+│   │  Rewards    │         │   Bonuses   │         │ Bonuses │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │ Combinable  │         │ Governance  │         │ Flexible│ │
+│   │ Positions   │         │   Voting    │         │ Locking │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+- **Tiered Rewards**: Progressive APY based on stake amount
+- **Duration Bonuses**: Increased rewards for longer locks
+- **Loyalty Bonuses**: Additional APY for long-term stakers
+- **Combinable Positions**: Merge multiple stakes with weighted parameters
+- **Governance Voting**: Voting power based on stake amount and duration
+- **Flexible Locking**: Options from 7 days to 365 days
+
+## Protocol Lifecycle
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   PROTOCOL LIFECYCLE                           │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │  Genesis    │         │  Protocol   │         │ Token   │ │
+│   │ Collection  │────────►│  Bootstrap  │────────►│ Launch  │ │
+│   └─────────────┘         └─────────────┘         └────┬────┘ │
+│                                                        │      │
+│                                                        ▼      │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │ Ecosystem   │         │  Advanced   │         │ Feature │ │
+│   │ Expansion   │◄────────┤ Collections │◄────────┤ Rollout │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+1. **Genesis Phase**: Initial NFT collection launch with BERA
+2. **Bootstrap Phase**: Treasury formation and protocol setup
+3. **Token Launch**: IKIGAI token distribution and staking activation
+4. **Feature Rollout**: Deployment of core protocol features
+5. **Advanced Collections**: AI Art Series launch with IKIGAI
+6. **Ecosystem Expansion**: Cross-chain integration and partnerships
+
+## Smart Contract Architecture
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   CONTRACT ARCHITECTURE                        │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │    NFT      │         │  Staking    │         │Treasury │ │
+│   │  Contracts  │         │  System     │         │ System  │ │
+│   └──────┬──────┘         └──────┬──────┘         └────┬────┘ │
+│          │                       │                     │      │
+│          ▼                       ▼                     ▼      │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │   721NFT    │         │  StakingV2  │         │Treasury │ │
+│   │             │         │             │         │   V2    │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │  Buyback    │         │  Emission   │         │Protocol │ │
+│   │  Engine     │         │ Controller  │         │NFTVault │ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+## Governance System
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   GOVERNANCE SYSTEM                            │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────┐ │
+│   │  Proposal   │         │   Voting    │         │Decision │ │
+│   │ Submission  │────────►│   Period    │────────►│Execution│ │
+│   └─────────────┘         └─────────────┘         └─────────┘ │
+│                                                               │
+│   ┌─────────────────────────────────────────────────────────┐ │
+│   │                                                         │ │
+│   │  VOTING POWER = Stake Amount × Duration Multiplier      │ │
+│   │                                                         │ │
+│   │  • Proposal Threshold: 1% of total supply               │ │
+│   │  • Quorum Requirement: 4% of total supply               │ │
+│   │  • Max Duration Multiplier: 4x (for 120+ day locks)     │ │
+│   │                                                         │ │
+│   └─────────────────────────────────────────────────────────┘ │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js v16+
+- Yarn or npm
+- Foundry (for contract development)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/ikigai-protocol/ikigai-core.git
+cd ikigai-core
+
+# Install dependencies
+yarn install
+
+# Compile contracts
+forge build
+```
+
+### Testing
+
+```bash
+# Run tests
+forge test
+
+# Run specific test
+forge test --match-contract StakingV2Test
+```
+
+## Documentation
+
+For detailed documentation, please visit our [GitBook](https://docs.ikigai.xyz).
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Core Features
 
@@ -931,9 +1195,6 @@ graph TD
     C -->|10% of purchased tokens| H[Rewards Pool]
     
     G -->|Reduces supply| I[Increased Scarcity]
-    H -->|Distributed to| J[Stakers]
-    
-    I -->|Potential value increase| K[IKIGAI Token]
     J -->|Incentivizes holding| K
     
     subgraph "Value Flow"
