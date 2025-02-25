@@ -23,466 +23,512 @@ The IKIGAI protocol implements a sophisticated tokenomics system designed for lo
 └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘
 ```
 
-## 1. Core Tokenomics Components
+## Updated Tokenomics Lifecycle
 
-### 1.1 Referral System with Token Incentives
-
-The referral system creates viral growth incentives by rewarding community advocates who bring new users to the platform.
-
-```solidity
-mapping(address => address) public referrers;
-mapping(address => uint256) public referralRewards;
-uint256 public referralRewardBps = 500; // 5% of mint price
+```
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│                             IKIGAI V3 TOKENOMICS LIFECYCLE                                 │
+└───────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                            │
+                                            ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                           │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐         ┌─────────────┐  │
+│  │    USER     │         │   PROTOCOL  │         │  TREASURY   │         │   MARKET    │  │
+│  │ ENGAGEMENT  │◄───────►│  ACTIVITY   │◄───────►│ OPERATIONS  │◄───────►│  DYNAMICS   │  │
+│  └──────┬──────┘         └──────┬──────┘         └──────┬──────┘         └──────┬──────┘  │
+│         │                       │                       │                       │         │
+│         ▼                       ▼                       ▼                       ▼         │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐         ┌─────────────┐  │
+│  │  Tiered     │         │  NFT Sales  │         │  Dynamic    │         │  Multi-Time │  │
+│  │  Referrals  │         │  & Minting  │         │  Buyback    │         │  Analysis   │  │
+│  └─────────────┘         └─────────────┘         └─────────────┘         └─────────────┘  │
+│                                                                                           │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐         ┌─────────────┐  │
+│  │  Loyalty    │         │  Staking &  │         │  Variable   │         │  Adaptive   │  │
+│  │  Rewards    │         │  Governance │         │  Unlocks    │         │  Emissions  │  │
+│  └─────────────┘         └─────────────┘         └─────────────┘         └─────────────┘  │
+│                                                                                           │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐         ┌─────────────┐  │
+│  │ Collection  │         │ Composable  │         │ Fee-Based   │         │ Price Floor │  │
+│  │ Synergies   │         │ Positions   │         │ Revenue     │         │ Support     │  │
+│  └─────────────┘         └─────────────┘         └─────────────┘         └─────────────┘  │
+│                                                                                           │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Features:**
-- 5% of mint price rewarded to referrers
-- Automatic tracking of referral relationships
-- Claimable rewards for community advocates
-- Creates viral growth incentives
+## NFT Collection Lifecycle & User Flow
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│                       IKIGAI NFT COLLECTION LIFECYCLE & USER FLOW                          │
+└───────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                            │
+                                            ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                           │
+│  ┌─────────────┐                                                     ┌─────────────┐      │
+│  │  GENESIS    │                                                     │    AI ART   │      │
+│  │ COLLECTION  │                                                     │   SERIES    │      │
+│  └──────┬──────┘                                                     └──────┬──────┘      │
+│         │                                                                   │            │
+│         │ Mint with BERA                                                    │ Mint with  │
+│         ▼                                                                   │ IKIGAI     │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐           │            │
+│  │   Initial   │         │  Protocol   │         │  IKIGAI     │           │            │
+│  │  Treasury   │────────►│  Bootstrap  │────────►│   Token     │◄──────────┘            │
+│  │  Formation  │         │             │         │  Launch     │                         │
+│  └─────────────┘         └─────────────┘         └─────────────┘                         │
+│                                                          │                               │
+│                                                          │                               │
+│                                                          ▼                               │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐         ┌─────────────┐│
+│  │  Staking    │         │  Governance │         │  Buyback    │         │  Additional  ││
+│  │  Rewards    │◄────────┤  Voting     │◄────────┤  Engine     │◄────────┤  Collections ││
+│  │             │         │  Rights     │         │  Activation │         │              ││
+│  └──────┬──────┘         └─────────────┘         └─────────────┘         └─────────────┘│
+│         │                                                                                │
+│         │                                                                                │
+│         ▼                                                                                │
+│  ┌─────────────────────────────────────────────────────────────────────────────────────┐ │
+│  │                                                                                     │ │
+│  │                              ECOSYSTEM EXPANSION                                    │ │
+│  │                                                                                     │ │
+│  │  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐         ┌────────┐│ │
+│  │  │ Cross-Chain │         │ Marketplace │         │ Derivatives │         │ Gaming ││ │
+│  │  │ Integration │         │ & Trading   │         │ & Lending   │         │        ││ │
+│  │  └─────────────┘         └─────────────┘         └─────────────┘         └────────┘│ │
+│  │                                                                                     │ │
+│  └─────────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                           │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Genesis Collection to AI Art Series Flow:**
+
+1. **Genesis Collection (BERA-based)**
+   - Limited supply of 10,000 NFTs
+   - Minted with BERA tokens
+   - Provides early adopter benefits
+   - Funds initial protocol treasury
+   - Holders receive governance rights
+
+2. **Protocol Bootstrap Phase**
+   - Treasury formation and diversification
+   - Smart contract deployment
+   - Initial liquidity provision
+   - Community building and marketing
+
+3. **IKIGAI Token Launch**
+   - Fair distribution to Genesis holders
+   - Initial staking program activation
+   - Liquidity mining incentives
+   - Governance system activation
+
+4. **AI Art Series (IKIGAI-based)**
+   - Minted exclusively with IKIGAI tokens
+   - Dynamic pricing based on demand
+   - Tiered referral rewards
+   - Collection synergy bonuses for Genesis holders
+   - Portion of sales funds buyback engine
+
+5. **Ecosystem Expansion**
+   - Cross-chain collection deployment
+   - Advanced marketplace features
+   - Lending and derivatives
+   - Gaming and metaverse integration
+
+## 1. Core Tokenomics Components
+
+### 1.1 Tiered Referral System
+
+The enhanced referral system creates progressive incentives for community advocates who bring new users to the platform, with increasing rewards for higher performance.
 
 ```
 ┌──────────────────┐         refers         ┌──────────────────┐
 │                  │ ──────────────────────>│                  │
 │    User A        │                        │     User B       │
-│                  │                        │                  │
+│    (16+ refs)    │                        │                  │
 └──────────────────┘                        └──────────────────┘
          │                                           │
          │ claims                                    │ mints
-         │ rewards                                   │ NFT
-         ▼                                           ▼
-┌──────────────────┐                        ┌──────────────────┐
-│    5% Reward     │<───────────────────────│   95% Protocol   │
-└──────────────────┘                        └──────────────────┘
+         │ 10% reward                                │ NFT
+         ▼                                           │
+┌──────────────────┐                                 │
+│                  │                                 │
+│  Referral Reward │<────────────────────────────────┘
+│                  │            5-10% of mint price
+└──────────────────┘            based on tier
 ```
 
-### 1.2 Cross-Collection NFT Synergies
+**Key Features:**
+- Progressive rewards based on referral volume:
+  - 5% for 1-5 referrals
+  - 7% for 6-15 referrals
+  - 10% for 16+ referrals
+- Capped rewards (100,000 IKIGAI max per referrer)
+- Automatic tracking of referral relationships
+- Creates sustainable viral growth incentives
 
-The cross-collection synergy system encourages users to collect across multiple NFT collections in the ecosystem, creating stronger network effects.
+### 1.2 Enhanced Collection Synergies
 
-```solidity
-address[] public registeredCollections;
-mapping(address => bool) public isRegisteredCollection;
-uint256 public collectionBonusBps = 250; // 2.5% per collection
-uint256 public maxCollectionBonus = 1000; // 10% max
+The cross-collection synergy system now includes rarity-based multipliers and special bonuses for collecting across multiple collections.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   COLLECTION SYNERGIES                         │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────┐             ┌─────────┐             ┌─────────┐ │
+│   │Collection│            │Collection│            │Collection│ │
+│   │    A     │            │    B     │            │    C     │ │
+│   └────┬─────┘            └────┬─────┘            └────┬─────┘ │
+│        │                       │                      │       │
+│        └───────────────────────┼──────────────────────┘       │
+│                                │                              │
+│                                ▼                              │
+│                        ┌───────────────┐                      │
+│                        │  Discount on  │                      │
+│                        │  Future Mints │                      │
+│                        └───────────────┘                      │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 **Key Features:**
 - 2.5% discount per additional collection owned
-- Up to 10% maximum collection bonus
+- Rarity-based multipliers for different collections
+- Up to 15% maximum collection bonus (increased from 10%)
+- Special bonus for holding 3+ collections
 - Encourages ecosystem-wide collecting
-- Rewards dedicated community members
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     COLLECTION BONUS SYSTEM                     │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                ┌─────────────┼─────────────┐
-                ▼             ▼             ▼
-        ┌───────────┐  ┌───────────┐  ┌───────────┐
-        │Collection1│  │Collection2│  │Collection3│  ...
-        └───────────┘  └───────────┘  └───────────┘
-                │             │             │
-                └─────────────┼─────────────┘
-                              ▼
-                     ┌─────────────────┐
-                     │  Bonus Formula  │
-                     │ min(n*2.5%, 10%)│
-                     └─────────────────┘
-                              │
-                              ▼
-                     ┌─────────────────┐
-                     │  Mint Discount  │
-                     └─────────────────┘
-```
 
 ### 1.3 Composable Staking Positions
 
-The composable staking system allows users to optimize their staking positions by combining multiple stakes into a single position.
+The staking system now rewards historical commitment and includes loyalty bonuses for long-term stakers.
 
-```solidity
-function combineStakes(uint256[] calldata _stakeIds) external nonReentrant returns (uint256) {
-    // Implementation details...
-    // Calculate weighted lock period
-    weightedLockPeriod = weightedLockPeriod / totalAmount;
-    // Create new combined stake
-    uint256 newStakeId = _createStake(totalAmount, weightedLockPeriod);
-}
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   COMPOSABLE STAKING                           │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────┐             ┌─────────┐             ┌─────────┐ │
+│   │ Stake A  │            │ Stake B  │            │ Stake C  │ │
+│   │ 1000 IKI │            │ 5000 IKI │            │ 2000 IKI │ │
+│   │ 30 days  │            │ 90 days  │            │ 60 days  │ │
+│   └────┬─────┘            └────┬─────┘            └────┬─────┘ │
+│        │                       │                      │       │
+│        └───────────────────────┼──────────────────────┘       │
+│                                │                              │
+│                                ▼                              │
+│                        ┌───────────────┐                      │
+│                        │Combined Stake │                      │
+│                        │  8000 IKI     │                      │
+│                        │  ~70 days     │                      │
+│                        │ + history bonus│                     │
+│                        └───────────────┘                      │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 **Key Features:**
-- Allows users to optimize their staking positions
-- Reduces contract storage overhead
-- Creates more flexible staking strategies
-- Improves capital efficiency
-
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│  Stake #1   │    │  Stake #2   │    │  Stake #3   │
-│ 1000 IKIGAI │    │ 2000 IKIGAI │    │ 3000 IKIGAI │
-│  30 days    │    │  60 days    │    │  90 days    │
-└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
-       │                  │                  │
-       └──────────┬───────┴──────────┬───────┘
-                  │                  │
-                  ▼                  ▼
-         ┌────────────────────────────────┐
-         │        Combined Stake          │
-         │         6000 IKIGAI            │
-         │ (1000*30 + 2000*60 + 3000*90)  │
-         │   ÷ 6000 = ~70 days lock       │
-         └────────────────────────────────┘
-```
+- Combine multiple stakes into a single position
+- Weighted lock period calculation with historical bonus
+- Rewards historical staking commitment (5% bonus for time already staked)
+- Prevents manipulation through improved formulas
+- Adds loyalty bonuses based on staking history (2% per year, up to 10%)
+- Creates incentives for long-term participation
 
 ### 1.4 Protocol-Owned NFT Vault
 
-The protocol-owned NFT vault allows the protocol to acquire and hold strategic NFTs, creating sustainable revenue streams.
-
-```solidity
-// Revenue sharing
-uint256 public constant BUYBACK_SHARE_BPS = 2000; // 20% to buyback
-uint256 public constant TREASURY_SHARE_BPS = 8000; // 80% to treasury
-```
-
-**Key Features:**
-- Protocol acquires and holds strategic NFTs
-- 20% of NFT sale revenue to buyback and burn
-- 80% to treasury for protocol development
-- Creates sustainable protocol-owned assets
+The protocol-owned NFT vault now implements dynamic buyback allocation based on market conditions.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     PROTOCOL NFT VAULT                          │
-└───────────────────────────────┬─────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                   PROTOCOL-OWNED NFT VAULT                     │
+└───────────────────────────────┬───────────────────────────────┘
                                 │
                                 ▼
-                      ┌───────────────────┐
-                      │   NFT Portfolio   │
-                      └─────────┬─────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────┐             ┌─────────┐             ┌─────────┐ │
+│   │  NFT    │             │  NFT    │             │  NFT    │ │
+│   │ Sales   │────────────►│ Revenue │────────────►│ Vault   │ │
+│   └─────────┘             └────┬────┘             └─────────┘ │
+│                                │                              │
+│                                │                              │
+│                                ▼                              │
+│                    ┌───────────────────────┐                  │
+│                    │                       │                  │
+│                    ▼                       ▼                  │
+│             ┌─────────────┐        ┌─────────────┐           │
+│             │   Buyback   │        │  Treasury   │           │
+│             │  10-40%     │        │  60-90%     │           │
+│             └─────────────┘        └─────────────┘           │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Key Features:**
+- Dynamic allocation based on market conditions:
+  - Default: 20% buyback, 80% treasury
+  - Price < 90% of 90-day avg: 40% buyback, 60% treasury
+  - Price > 110% of 90-day avg: 10% buyback, 90% treasury
+- 7-day cooldown between allocation adjustments
+- Optimizes treasury resource utilization
+- Increases market stability
+
+## 2. Value Capture Mechanisms
+
+### 2.1 Multi-Timeframe Buyback Analysis
+
+The buyback system now incorporates both short-term and long-term price analysis to make more intelligent buyback decisions.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│              MULTI-TIMEFRAME BUYBACK ANALYSIS                  │
+└───────────────────────────────┬───────────────────────────────┘
                                 │
                                 ▼
-                      ┌───────────────────┐
-                      │   Sale Revenue    │
-                      └─────────┬─────────┘
-                                │
-              ┌─────────────────┴─────────────────┐
-              ▼                                   ▼
-    ┌───────────────────┐               ┌───────────────────┐
-    │      20% to       │               │      80% to       │
-    │     Buyback       │               │     Treasury      │
-    └─────────┬─────────┘               └─────────┬─────────┘
-              │                                   │
-              ▼                                   ▼
-    ┌───────────────────┐               ┌───────────────────┐
-    │    Token Burn     │               │  Protocol Growth  │
-    └───────────────────┘               └───────────────────┘
-```
-
-### 1.5 Algorithmic Buyback Pressure
-
-The algorithmic buyback system creates counter-cyclical market support by adjusting buyback amounts based on market conditions.
-
-```solidity
-function calculateOptimalBuybackAmount() public view returns (uint256) {
-    // Get current price and 30-day average
-    uint256 currentPrice = getCurrentPrice();
-    uint256 thirtyDayAvg = getThirtyDayAveragePrice();
-    
-    // Calculate price deviation
-    uint256 deviation = 0;
-    if (currentPrice < thirtyDayAvg) {
-        deviation = ((thirtyDayAvg - currentPrice) * 10000) / thirtyDayAvg;
-    }
-    
-    // Calculate buyback multiplier based on deviation
-    uint256 multiplier = 10000 + (deviation * 3); // +0-30% based on deviation
-    
-    return (MIN_BUYBACK_AMOUNT * multiplier) / 10000;
-}
-```
-
-**Key Features:**
-- Creates counter-cyclical market support
-- Optimizes treasury usage during downtrends
-- Reduces buyback waste during uptrends
-- Provides algorithmic price stability
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                  ALGORITHMIC BUYBACK SYSTEM                     │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-                    ┌────────────────────┐
-                    │  Market Analysis   │
-                    └──────────┬─────────┘
-                               │
-         ┌────────────────────┴────────────────────┐
-         ▼                                         ▼
-┌──────────────────┐                      ┌──────────────────┐
-│  Price Below     │                      │  Price Above     │
-│  30-day Average  │                      │  30-day Average  │
-└────────┬─────────┘                      └────────┬─────────┘
-         │                                         │
-         ▼                                         ▼
-┌──────────────────┐                      ┌──────────────────┐
-│Increase Buyback  │                      │Maintain Baseline │
-│Up to +30%        │                      │    Buyback       │
-└────────┬─────────┘                      └────────┬─────────┘
-         │                                         │
-         └─────────────────┬───────────────────────┘
-                           │
-                           ▼
-                 ┌────────────────────┐
-                 │  Execute Buyback   │
-                 └────────┬───────────┘
-                          │
-                          ▼
-                 ┌────────────────────┐
-                 │    Token Burn      │
-                 └────────────────────┘
-```
-
-### 1.6 Liquidity Position NFTs
-
-The liquidity position NFT system tokenizes LP positions, making them tradable and composable.
-
-```solidity
-function mintPositionNFT(
-    address _pair,
-    uint256 _liquidity,
-    uint256 _lockDuration
-) external nonReentrant returns (uint256) {
-    // Implementation details...
-}
-```
-
-**Key Features:**
-- Makes liquidity positions tradable
-- Creates secondary market for LP positions
-- Enables LP position composability
-- Improves liquidity provider experience
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                   LIQUIDITY POSITION NFTs                       │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-                    ┌────────────────────┐
-                    │   LP Token Deposit │
-                    └──────────┬─────────┘
-                               │
-                               ▼
-                    ┌────────────────────┐
-                    │   Position NFT     │
-                    │      Minted        │
-                    └──────────┬─────────┘
-                               │
-         ┌────────────────────┼────────────────────┐
-         ▼                    ▼                    ▼
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│     Trade on     │  │    Stake for     │  │   Use as         │
-│  NFT Marketplace │  │ Additional Yield │  │  Collateral      │
-└──────────────────┘  └──────────────────┘  └──────────────────┘
-```
-
-### 1.7 Adaptive Emission Control
-
-The adaptive emission control system adjusts token emission rates based on market conditions to maintain price stability.
-
-```solidity
-function adjustEmissionRate() external nonReentrant {
-    // Calculate 7-day price volatility
-    uint256 volatility = calculate7DayVolatility();
-    
-    // If volatility is too high, reduce emissions
-    if (volatility > TARGET_PRICE_STABILITY) {
-        uint256 reduction = (volatility - TARGET_PRICE_STABILITY) / 100;
-        reduction = reduction > 20 ? 20 : reduction; // Cap at 20%
-        
-        baseEmissionRate = baseEmissionRate * (100 - reduction) / 100;
-    } 
-    // If volatility is low, can slightly increase emissions
-    else if (volatility < TARGET_PRICE_STABILITY / 2) {
-        baseEmissionRate = baseEmissionRate * 102 / 100; // +2%
-    }
-}
-```
-
-**Key Features:**
-- Creates self-regulating token supply
-- Reduces price volatility
-- Optimizes emission schedule based on market conditions
-- Provides algorithmic monetary policy
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                  ADAPTIVE EMISSION CONTROL                      │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-                    ┌────────────────────┐
-                    │ Volatility Analysis│
-                    └──────────┬─────────┘
-                               │
-         ┌────────────────────┼────────────────────┐
-         ▼                    ▼                    ▼
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│  High Volatility │  │ Normal Volatility│  │  Low Volatility  │
-│     (>5%)        │  │    (2.5-5%)      │  │     (<2.5%)      │
-└────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                      PRICE ANALYSIS                            │
+└─────────┬─────────────────────┬─────────────────┬─────────────┘
+          │                     │                 │
+          ▼                     ▼                 ▼
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│ CURRENT PRICE   │   │  30-DAY AVERAGE │   │  90-DAY AVERAGE │
+│  Short-term     │   │  Medium-term    │   │   Long-term     │
+└────────┬────────┘   └────────┬────────┘   └────────┬────────┘
          │                     │                     │
-         ▼                     ▼                     ▼
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│ Reduce Emissions │  │ Maintain Current │  │Increase Emissions│
-│  (up to -20%)    │  │  Emission Rate   │  │      (+2%)       │
-└──────────────────┘  └──────────────────┘  └──────────────────┘
-```
-
-### 1.8 Milestone-Based Token Unlocks
-
-The milestone-based token unlock system aligns token release with development progress, creating transparent roadmap incentives.
-
-```solidity
-struct Milestone {
-    string description;
-    uint256 tokenAmount;
-    bool achieved;
-    uint256 unlockTime;
-}
+         └─────────────────────┼─────────────────────┘
+                               │
+                               ▼
+┌───────────────────────────────────────────────────────────────┐
+│  BUYBACK DECISION MATRIX                                       │
+│                                                                │
+│  Scenario 1: Downtrend (90-day > 30-day)                       │
+│    - Aggressive buybacks (up to +40% of base amount)           │
+│                                                                │
+│  Scenario 2: Uptrend (90-day < 30-day)                         │
+│    - Conservative buybacks (up to +20% of base amount)         │
+│                                                                │
+│  Scenario 3: Extreme Uptrend (price > 120% of 90-day avg)      │
+│    - Pause buybacks to preserve treasury resources             │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 **Key Features:**
-- Transparent roadmap-based token releases
-- 30-day delay between achievement and unlocking
-- Governance-controlled milestone verification
-- Aligns token release with development progress
+- Incorporates both 30-day and 90-day price averages
+- Adjusts buyback strategy based on long-term trend direction
+- More aggressive in downtrends (up to +40% buyback)
+- More conservative in uptrends (up to +20% buyback)
+- Pauses buybacks during extreme uptrends (>120% of 90-day avg)
+- Preserves treasury resources during bull markets
+
+### 2.2 Liquidity Position NFTs
+
+The liquidity position NFTs tokenize LP positions, making them tradable and composable.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                MILESTONE-BASED TOKEN UNLOCKS                    │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-                    ┌────────────────────┐
-                    │ Milestone Achieved │
-                    └──────────┬─────────┘
-                               │
-                               ▼
-                    ┌────────────────────┐
-                    │   30-Day Delay     │
-                    └──────────┬─────────┘
-                               │
-                               ▼
-                    ┌────────────────────┐
-                    │   Tokens Unlocked  │
-                    └──────────┬─────────┘
-                               │
-                               ▼
-                    ┌────────────────────┐
-                    │ Distribution to    │
-                    │ Designated Address │
-                    └────────────────────┘
-```
-
-## 2. Tokenomics Integration Flow
-
-The advanced tokenomics features create a virtuous cycle that drives token value, user engagement, and protocol sustainability:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     TOKENOMICS LIFECYCLE                        │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        GENESIS PHASE                            │
-│                                                                 │
-│ • Users mint with BERA tokens                                   │
-│ • Receive vested IKIGAI rewards                                 │
-│ • Refer friends for additional rewards                          │
-└───────────────────────────────┬─────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                   LIQUIDITY POSITION NFTs                      │
+└───────────────────────────────┬───────────────────────────────┘
                                 │
                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       ENGAGEMENT PHASE                          │
-│                                                                 │
-│ • Stake IKIGAI for governance rights and discounts              │
-│ • Collect across multiple NFT collections for bonuses           │
-│ • Participate in milestone achievements                         │
-│ • Provide liquidity and receive LP NFTs                         │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     VALUE ACCRUAL PHASE                         │
-│                                                                 │
-│ • NFT sales drive buyback and burn                              │
-│ • Protocol acquires strategic NFTs                              │
-│ • Treasury grows through adaptive fees                          │
-│ • Token supply decreases through burns                          │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-                                ▼
-                         ┌─────────────┐
-                         │  FEEDBACK   │
-                         │    LOOP     │──────┐
-                         └─────────────┘      │
-                                             ┌┘
-                                             │
-                                             └─▶ (Back to Genesis Phase)
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────┐             ┌─────────┐             ┌─────────┐ │
+│   │  Add    │             │ Liquidity│            │   LP    │ │
+│   │Liquidity │────────────►│ Position │───────────►│  NFT    │ │
+│   └─────────┘             └────┬─────┘            └────┬────┘ │
+│                                │                       │      │
+│                                │                       │      │
+│                                ▼                       ▼      │
+│                        ┌───────────────┐      ┌───────────────┐
+│                        │  Earn Fees    │      │  Trade on     │
+│                        │  & Rewards    │      │  Marketplace  │
+│                        └───────────────┘      └───────────────┘
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-## 3. Economic Parameters
+**Key Features:**
+- Tokenized LP positions as NFTs
+- Tradable on NFT marketplaces
+- Composable with other DeFi primitives
+- Earn trading fees and liquidity rewards
+- Simplified liquidity management
 
-### 3.1 Fee Structure
+### 2.3 Variable Token Unlock Delays
 
-The adaptive fee structure optimizes fee revenue while encouraging larger transactions:
+The milestone-based token unlock system now includes variable delays based on token amount and staggered releases.
 
-```solidity
-function calculateDynamicFee(uint256 _transactionValue) public view returns (uint256) {
-    // Base fee for standard transactions
-    uint256 fee = baseFee;
-    
-    // Reduce fee for large transactions
-    if (_transactionValue > 10000e18) { // > 10,000 tokens
-        fee = fee * 90 / 100; // 10% discount
-    }
-    
-    // Further reduce for very large transactions
-    if (_transactionValue > 100000e18) { // > 100,000 tokens
-        fee = fee * 80 / 100; // Additional 20% discount
-    }
-    
-    return fee;
-}
+```
+┌───────────────────────────────────────────────────────────────┐
+│                VARIABLE TOKEN UNLOCK SYSTEM                    │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                      UNLOCK PARAMETERS                         │
+└─────────┬─────────────────────┬─────────────────┬─────────────┘
+          │                     │                 │
+          ▼                     ▼                 ▼
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│  SMALL UNLOCK   │   │  MEDIUM UNLOCK  │   │  LARGE UNLOCK   │
+│   <1M tokens    │   │   1-5M tokens   │   │   >5M tokens    │
+│   30-day delay  │   │   60-day delay  │   │   90-day delay  │
+└────────┬────────┘   └────────┬────────┘   └────────┬────────┘
+         │                     │                     │
+         └─────────────────────┼─────────────────────┘
+                               │
+                               ▼
+┌───────────────────────────────────────────────────────────────┐
+│  STAGGERED RELEASE SCHEDULE                                    │
+│                                                                │
+│  Month 1: 25% of tokens released                               │
+│  Month 2: 50% of tokens released (cumulative)                  │
+│  Month 3: 75% of tokens released (cumulative)                  │
+│  Month 4: 100% of tokens released (cumulative)                 │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-**Fee Parameters:**
+**Key Features:**
+- Variable delays based on token amount:
+  - <1M tokens: 30-day delay
+  - 1-5M tokens: 60-day delay
+  - >5M tokens: 90-day delay
+- Staggered release schedule (25% per month over 4 months)
+- Reduces market impact of large unlocks
+- Creates more predictable token supply growth
+
+### 2.4 Loyalty-Based Fee Structure
+
+The fee structure now rewards long-term users with progressive discounts based on their history with the protocol.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   LOYALTY-BASED FEE STRUCTURE                  │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                      FEE COMPONENTS                            │
+└─────────┬─────────────────────┬─────────────────┬─────────────┘
+          │                     │                 │
+          ▼                     ▼                 ▼
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│   BASE FEE      │   │ VOLUME DISCOUNT │   │ LOYALTY DISCOUNT│
+│      3%         │   │  Up to 20%      │   │   Up to 20%     │
+└─────────────────┘   └─────────────────┘   └─────────────────┘
+
+┌───────────────────────────────────────────────────────────────┐
+│  EXAMPLE FEE CALCULATION                                       │
+│                                                                │
+│  User: 2 years of activity, 20,000 IKIGAI transaction          │
+│  Base Fee: 3%                                                  │
+│  Volume Discount: -10% (>10,000 IKIGAI)                        │
+│  Loyalty Discount: -10% (2 years × 5% per year)                │
+│  Total Discount: 20%                                           │
+│  Final Fee: 3% × (100% - 20%) = 2.4%                           │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Key Features:**
 - Base fee: 3% for standard transactions
-- Volume discounts for larger transactions:
+- Volume discounts (capped at 25% total):
   - 10% discount for transactions > 10,000 IKIGAI
-  - Additional 20% discount for transactions > 100,000 IKIGAI
+  - Additional 10% discount for transactions > 100,000 IKIGAI
+- Loyalty discounts:
+  - 5% per year of activity (up to 20% max)
 - Minimum fee: 1%
 - Maximum fee: 5%
+- Balances benefits between whales and loyal users
 
-### 3.2 Staking Rewards
+### 2.5 Inclusive Staking Rewards
 
-The tiered staking system rewards long-term holders and larger stake amounts:
+The staking system now includes lower entry tiers and time-based loyalty bonuses to reward smaller, long-term holders.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   INCLUSIVE STAKING REWARDS                    │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                      REWARD COMPONENTS                         │
+└─────────┬─────────────────────┬─────────────────┬─────────────┘
+          │                     │                 │
+          ▼                     ▼                 ▼
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│   TIER BONUS    │   │ DURATION BONUS  │   │ LOYALTY BONUS   │
+│ Based on amount │   │Based on lock time│   │Based on history │
+└────────┬────────┘   └────────┬────────┘   └────────┬────────┘
+         │                     │                     │
+         └─────────────────────┼─────────────────────┘
+                               │
+                               ▼
+┌───────────────────────────────────────────────────────────────┐
+│  EXAMPLE APY CALCULATION                                       │
+│  User: 2 years staking history, 5,000 IKIGAI, 90-day lock      │
+│  Base APY: 15%                                                 │
+│  Tier Bonus: +5% (Tier 1)                                      │
+│  Duration Bonus: 90 days ÷ 7 days × 0.5% = +6.4%               │
+│  Loyalty Bonus: 2 years × 2% = +4%                             │
+│  Total APY: 15% + 5% + 6.4% + 4% = 30.4%                       │
+└───────────────────────────────────────────────────────────────┘
+```
 
 **Staking Parameters:**
 - Base APY: 15%
+- Entry tier (1,000 IKIGAI): +2% APY
 - Tier 1 (5,000 IKIGAI): +5% APY
 - Tier 2 (10,000 IKIGAI): +10% APY
 - Tier 3 (25,000 IKIGAI): +15% APY
 - Weekly bonus: +0.5% per week of lock duration
+- Loyalty bonus: +2% per year of staking (up to 10% max)
 - Maximum lock period: 365 days
 
-### 3.3 Emission Schedule
+## 3. Tokenomics Integration
 
-The adaptive emission control system ensures sustainable token distribution:
+### 3.1 Adaptive Emission Control
+
+The emission control system ensures sustainable token distribution with adaptive adjustments based on market conditions:
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   ADAPTIVE EMISSION CONTROL                    │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────┐             ┌─────────┐             ┌─────────┐ │
+│   │ Monitor │             │ Analyze │             │ Adjust  │ │
+│   │ Price   │────────────►│Volatility│───────────►│Emissions │ │
+│   └─────────┘             └─────────┘             └─────────┘ │
+│                                                               │
+│                                                               │
+│                                                               │
+│   ┌───────────────────────────────────────────────────────┐   │
+│   │  EMISSION ADJUSTMENT RULES                            │   │
+│   │                                                       │   │
+│   │  If 7-day volatility > 5%:                           │   │
+│   │    - Reduce emissions by up to 20%                    │   │
+│   │                                                       │   │
+│   │  If 7-day volatility < 2.5%:                         │   │
+│   │    - Increase emissions by 2%                         │   │
+│   │                                                       │   │
+│   │  Weekly base reduction: 0.5%                         │   │
+│   └───────────────────────────────────────────────────────┘   │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
 
 **Emission Parameters:**
 - Initial daily emission: 685,000 IKIGAI
@@ -490,16 +536,38 @@ The adaptive emission control system ensures sustainable token distribution:
 - Target price stability: 5% max volatility
 - Maximum emission adjustment: 20% reduction
 - Minimum emission after 2 years: 50% of initial rate
+- Adjustment cooldown: 7 days
 
-## 4. Governance and Voting Power
+### 3.2 Governance and Voting Power
 
 The governance-weighted staking system aligns voting power with economic commitment:
 
-```solidity
-function getVotingPower(address _user) external view returns (uint256) {
-    // Voting power increases with stake amount and duration
-    return amount * (lockDuration / 30 days) / 4; // Max 4x multiplier
-}
+```
+┌───────────────────────────────────────────────────────────────┐
+│                   GOVERNANCE VOTING POWER                      │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────┐             ┌─────────┐             ┌─────────┐ │
+│   │  Stake  │             │  Lock   │             │  Vote   │ │
+│   │ Amount  │────────────►│ Duration │───────────►│  Power  │ │
+│   └─────────┘             └─────────┘             └─────────┘ │
+│                                                               │
+│                                                               │
+│                                                               │
+│   ┌───────────────────────────────────────────────────────┐   │
+│   │  VOTING POWER CALCULATION                             │   │
+│   │                                                       │   │
+│   │  Base voting power = Stake Amount                     │   │
+│   │  Duration multiplier = Lock Period ÷ 30 days          │   │
+│   │  (capped at 4x for 120+ days)                         │   │
+│   │                                                       │   │
+│   │  Total voting power = Base × Duration multiplier      │   │
+│   └───────────────────────────────────────────────────────┘   │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 **Governance Parameters:**
@@ -509,8 +577,49 @@ function getVotingPower(address _user) external view returns (uint256) {
 - Proposal threshold: 1% of total supply
 - Quorum requirement: 4% of total supply
 
-## 5. Conclusion
+## 4. Conclusion
 
-The IKIGAI V3 tokenomics system creates a sophisticated economic framework that aligns incentives across all stakeholders. By implementing advanced mechanisms like algorithmic buybacks, composable staking, and adaptive emissions, the protocol creates sustainable value accrual while maintaining price stability and encouraging long-term participation.
+The enhanced IKIGAI V3 tokenomics system creates a sophisticated economic framework that aligns incentives across all stakeholders. By implementing advanced mechanisms like tiered referrals, multi-timeframe buyback analysis, loyalty rewards, and variable token unlocks, the protocol creates sustainable value accrual while maintaining price stability and encouraging long-term participation.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                IKIGAI V3 TOKENOMICS FLYWHEEL                   │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│   ┌─────────┐                                   ┌─────────┐   │
+│   │  NFT    │◄───┐                       ┌────►│ Buyback  │   │
+│   │ Sales   │    │                       │     │ Engine   │   │
+│   └────┬────┘    │                       │     └────┬─────┘   │
+│        │         │                       │          │         │
+│        ▼         │                       │          ▼         │
+│   ┌─────────┐    │                       │     ┌─────────┐   │
+│   │ Protocol │    │                       │     │  Token   │   │
+│   │ Revenue  │────┼───┐             ┌─────┼────►  Burns   │   │
+│   └────┬─────┘    │   │             │     │     └─────────┘   │
+│        │          │   │             │     │                   │
+│        ▼          │   │             │     │                   │
+│   ┌─────────┐     │   │             │     │     ┌─────────┐   │
+│   │ Treasury │     │   │             │     │     │  Price   │   │
+│   │  Growth  │◄────┘   │             │     └────►  Floor   │   │
+│   └────┬─────┘         │             │           └────┬────┘   │
+│        │               │             │                │        │
+│        ▼               │             │                ▼        │
+│   ┌─────────┐          │             │           ┌─────────┐   │
+│   │ Staking │          │             │           │  User    │   │
+│   │ Rewards │◄─────────┘             └──────────►  Value    │   │
+│   └─────────┘                                    └─────────┘   │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+These improvements address key feedback points by:
+1. Creating more inclusive systems for smaller participants
+2. Rewarding long-term loyalty across all protocol activities
+3. Implementing more sophisticated market-responsive mechanisms
+4. Preventing manipulation through improved formulas
+5. Balancing benefits between different user segments
 
 This integrated system creates multiple reinforcing loops that drive token value, user engagement, and protocol sustainability, positioning IKIGAI as a leading protocol in the NFT and DeFi space. 
