@@ -1,4 +1,5 @@
 import { PluginInterface } from "../interfaces/PluginInterface";
+import { OogaBoogaPlugin } from '../plugins/OogaBoogaPlugin';
 
 export class PluginManager {
   private plugins: Map<string, PluginInterface> = new Map();
@@ -51,5 +52,11 @@ export class PluginManager {
       console.log(`Plugin ${name} shut down`);
     }
     this.plugins.clear();
+  }
+  
+  initializeDefaultPlugins() {
+    // Add Ooga Booga plugin
+    const oogaBoogaPlugin = new OogaBoogaPlugin();
+    this.registerPlugin('oogabooga', oogaBoogaPlugin);
   }
 } 
